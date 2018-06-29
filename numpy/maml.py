@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
+import os
 import pickle
 import copy
 import random
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mpl; 
+mpl.rcParams["savefig.directory"] = '~/Desktop'#$os.chdir(os.path.dirname(__file__))
 import argparse
 from collections import defaultdict
 
@@ -16,12 +19,7 @@ from utils.data_generator import SinusoidGenerator
 # TODO: how would I adapt this to be able to take more than one gradient step 
 # TODO: refactor the inner_backward to maybe be used in the meta_backward, though I kind of don't like that it is all modularize, though I kind of do.  this could be added right 
 # after the inner_forward in the meta_forward, and it would have to cache stuff
-# TODO: add more capcity
 # TODO: clean up cache to maybe be list that takes a subset of locals()
-
-# Thing to try to fix gradient
-# - make sure everything has the size I expect
-
 
 # this will create a special dictionary that returns 0 if the element is not set, instead of error
 # (it makes the code for updating gradients simpler)
@@ -39,7 +37,7 @@ def build_weights(hidden_dims=(40, 40)):
     d['W1'] = (-1 + 2*np.random.rand(1, H1)) / np.sqrt(1)
     d['b1'] = np.zeros(H1)
     d['W2'] = (-1 + 2*np.random.rand(H1, H2)) / np.sqrt(H1)
-    d['b2'] = np.zeros(1)
+    d['b2'] = np.zeros(H2)
     d['W3'] = (-1 + 2*np.random.rand(H2, 1)) / np.sqrt(H2)
     d['b3'] = np.zeros(1)
 
@@ -86,7 +84,7 @@ class Network(object):
         cache = dict(x_a=x_a, affine1_a=affine1_a, relu1_a=relu1_a, affine2_a=affine2_a, relu2_a=relu2_a)
         return pred_a, cache
 
-    def inner_backward(self, dout_a, weights, cache):
+    def inner_backward(self, dout_a, weights, cache, grads=None):
         """just for fine-tuning at the end"""
         w = weights; c = cache
         W1, b1, W2, b2, W3, b3 = w['W1'], w['b1'], w['W2'], w['b2'], w['W3'], w['b3']
@@ -107,14 +105,23 @@ class Network(object):
         db1 = np.sum(daffine1_a, axis=0)
 
         # grad steps
-        new_weights = {}
-        new_weights['W1'] = W1 - self.ALPHA*self.normalized(dW1)
-        new_weights['b1'] = b1 - self.ALPHA*self.normalized(db1)
-        new_weights['W2'] = W2 - self.ALPHA*self.normalized(dW2)
-        new_weights['b2'] = b2 - self.ALPHA*self.normalized(db2)
-        new_weights['W3'] = W3 - self.ALPHA*self.normalized(dW3)
-        new_weights['b3'] = b3 - self.ALPHA*self.normalized(db3)
-        return new_weights
+        if grads is None:
+            new_weights = {}
+            new_weights['W1'] = W1 - self.ALPHA*self.normalized(dW1)
+            new_weights['b1'] = b1 - self.ALPHA*self.normalized(db1)
+            new_weights['W2'] = W2 - self.ALPHA*self.normalized(dW2)
+            new_weights['b2'] = b2 - self.ALPHA*self.normalized(db2)
+            new_weights['W3'] = W3 - self.ALPHA*self.normalized(dW3)
+            new_weights['b3'] = b3 - self.ALPHA*self.normalized(db3)
+            return new_weights
+        else:
+            grads['W1'] += self.normalized(dW1)
+            grads['b1'] += self.normalized(db1)
+            grads['W2'] += self.normalized(dW2)
+            grads['b2'] += self.normalized(db2)
+            grads['W3'] += self.normalized(dW3)
+            grads['b3'] += self.normalized(db3)
+            return grads
 
 
     def meta_forward(self, x_a, x_b, label_a, weights, cache=None):
@@ -319,10 +326,11 @@ def test():
     """ 
     nn = Network()
     pre_weights = load_weights(FLAGS.weight_path)
+    baseline_weights = load_weights('baseline_'+FLAGS.weight_path)
     random_weights = build_weights()
 
     # values for fine-tuning step
-    N = 10
+    N = 15
     sin_gen = SinusoidGenerator(5*N, 1) 
     x, y, amp, phase = map(lambda x: x[0], sin_gen.generate()) # grab all the first elems
     xs = np.split(x, N)
@@ -330,6 +338,7 @@ def test():
 
     new_weights = pre_weights.copy()
     new_random_weights = random_weights.copy()
+    new_baseline_weights = baseline_weights.copy()
     for i in range(len(xs)):
         x = xs[i]
         y = ys[i]
@@ -348,39 +357,62 @@ def test():
         dout = 2*(pred - y)
         new_random_weights = nn.inner_backward(dout, new_random_weights, cache)
 
+    for i in range(len(xs)):
+        x = xs[i]
+        y = ys[i]
+        grads = GradDict()
+        pred, cache = nn.inner_forward(x, new_baseline_weights)
+        loss = (pred - y)**2
+        dout = 2*(pred - y)
+        new_baseline_weights = nn.inner_backward(dout, new_baseline_weights, cache)
+
 
     sine_true = lambda x: amp*np.sin(x - phase)
-    sine_nn = lambda x: nn.inner_forward(x, new_weights)[0]
     sine_pre = lambda x: nn.inner_forward(x, pre_weights)[0]
+    sine_nn = lambda x: nn.inner_forward(x, new_weights)[0]
+    sine_pre_baseline = lambda x: nn.inner_forward(x, baseline_weights)[0]
+    sine_baseline = lambda x: nn.inner_forward(x, new_baseline_weights)[0]
     sine_random = lambda x: nn.inner_forward(x, random_weights)[0]
     sine_new_random = lambda x: nn.inner_forward(x, new_random_weights)[0]
 
     x_vals = np.linspace(-5, 5)
 
     y_true = np.apply_along_axis(sine_true, 0, x_vals)
-    y_nn = np.array([sine_nn(np.array(x)) for x in x_vals]).squeeze()
+
     y_pre = np.array([sine_pre(np.array(x)) for x in x_vals]).squeeze()
+    y_nn = np.array([sine_nn(np.array(x)) for x in x_vals]).squeeze()
+
+    y_pre_baseline = np.array([sine_pre_baseline(np.array(x)) for x in x_vals]).squeeze()
+    y_baseline = np.array([sine_baseline(np.array(x)) for x in x_vals]).squeeze()
+
     y_random = np.array([sine_random(np.array(x)) for x in x_vals]).squeeze()
     y_new_random = np.array([sine_new_random(np.array(x)) for x in x_vals]).squeeze()
 
     plt.plot(x_vals, y_true, 'k', label='{:.2f}sin(x - {:.2f})'.format(amp, phase))
     plt.plot(x_vals, y_pre, 'r--', label='pre-update')
     plt.plot(x_vals, y_nn, 'r-', label='post-update')
-    plt.plot(x_vals, y_random, 'g--', label='random')
-    plt.plot(x_vals, y_new_random, 'g-', label='new_random')
+
+    plt.plot(x_vals, y_pre_baseline, 'g--', label='baseline')
+    plt.plot(x_vals, y_baseline, 'g-', label='new_baseline')
+
+    #plt.plot(x_vals, y_random, 'g--', label='random')
+    #plt.plot(x_vals, y_new_random, 'g-', label='new_random')
     plt.legend()
     plt.show()
 
 
-def main():
+def train():
     nn = Network()
     weights = build_weights()
+    baseline_weights = build_weights()
     optimizer = AdamOptimizer(weights, learning_rate=FLAGS.learning_rate)
+    baseline_optimizer = AdamOptimizer(baseline_weights, learning_rate=FLAGS.learning_rate)
 
     sin_gen = SinusoidGenerator(10, 25)  # update_batch * 2, meta batch size
 
 
-    lr = lambda x: x * FLAGS.learning_rate
+    #lr = lambda x: x * FLAGS.learning_rate
+    lr = lambda x : FLAGS.learning_rate
 
     nitr = 1e4
     for itr in range(int(nitr)):
@@ -396,18 +428,29 @@ def main():
         
         # META BATCH
         grads = GradDict() # zero grads
+        baseline_grads = GradDict() # zero grads
         losses = []
         for batch_i in range(len(inputa)):
             ia, la, ib, lb = inputa[batch_i], labela[batch_i], inputb[batch_i], labelb[batch_i]
+
             pred_b, cache = nn.meta_forward(ia, ib, la, weights, cache=True)
             losses.append((pred_b - lb)**2)
             dout_b = 2*(pred_b - lb)
             nn.meta_backward(dout_b, weights, cache, grads)
+
+
+            baseline_pred_b, baseline_cache = nn.meta_forward(ia, ib, la, baseline_weights, cache=True)
+            #losses.append((pred_b - lb)**2)
+            dout_b = 2*(pred_b - lb)
+            nn.meta_backward(dout_b, baseline_weights, baseline_cache, baseline_grads)
+
+
         optimizer.apply_gradients(weights, grads, learning_rate=lr(frac))
         if itr % 100 == 0:
             print("[itr: {}] Loss = {}".format(itr, np.sum(losses)))
 
     save_weights(weights, FLAGS.weight_path)
+    save_weights(baseline_weights, "baseline_"+FLAGS.weight_path)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='MAML')
@@ -425,6 +468,6 @@ if __name__ == '__main__':
         test()
         exit(0)
 
-    main()
+    train()
 
 
