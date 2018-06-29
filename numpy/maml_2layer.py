@@ -14,13 +14,8 @@ from utils.data_generator import SinusoidGenerator
 
 # TODO: probably add some plotting or something that shows that it actually works, rather than just the loss. Basically add a test. 
 # TODO: how would I adapt this to be able to take more than one gradient step 
-# TODO: refactor the inner_backward to maybe be used in the meta_backward, though I kind of don't like that it is all modularize, though I kind of do.  this could be added right 
-# after the inner_forward in the meta_forward, and it would have to cache stuff
+# TODO: refactor the inner_backward to maybe be used in the meta_backward, though I kind of don't like that it is all modularize, though I kind of do.
 # TODO: add more capcity
-# TODO: clean up cache to maybe be list that takes a subset of locals()
-
-# Thing to try to fix gradient
-# - make sure everything has the size I expect
 
 
 # this will create a special dictionary that returns 0 if the element is not set, instead of error
@@ -29,20 +24,17 @@ GradDict = lambda: defaultdict(lambda: 0)
 
 normalize = lambda x: (x - x.mean()) / (x.std() + 1e-8)
 
-def build_weights(hidden_dims=(40, 40)):
+def build_weights(hidden_dim=200):
     """Return weights to be used in forward pass"""
     # Initialize all weights (model params) with "Xavier Initialization" 
     # weight matrix init = uniform(-1, 1) / sqrt(layer_input)
     # bias init = zeros()
-    H1, H2 = hidden_dims
+    H = hidden_dim
     d = {}
-    d['W1'] = (-1 + 2*np.random.rand(1, H1)) / np.sqrt(1)
-    d['b1'] = np.zeros(H1)
-    d['W2'] = (-1 + 2*np.random.rand(H1, H2)) / np.sqrt(H1)
+    d['W1'] = (-1 + 2*np.random.rand(1, H)) / np.sqrt(1)
+    d['b1'] = np.zeros(H)
+    d['W2'] = (-1 + 2*np.random.rand(H, 1)) / np.sqrt(H)
     d['b2'] = np.zeros(1)
-    d['W3'] = (-1 + 2*np.random.rand(H2, 1)) / np.sqrt(H2)
-    d['b3'] = np.zeros(1)
-
 
     # Cast all parameters to the correct datatype
     for k, v in d.items():
@@ -72,32 +64,23 @@ class Network(object):
         self.ALPHA = alpha
         self.normalized = normalized
 
-    def inner_forward(self, x_a, weights):
+    def inner_forward(self, x_a, w):
         """submodule for forward pass"""
-        w = weights
-        W1, b1, W2, b2, W3, b3 = w['W1'], w['b1'], w['W2'], w['b2'], w['W3'], w['b3']
+        W1, b1, W2, b2 = w['W1'], w['b1'], w['W2'], w['b2']
 
         affine1_a = x_a.dot(W1) + b1
         relu1_a = np.maximum(0, affine1_a)
-        affine2_a = relu1_a.dot(W2) + b2 
-        relu2_a = np.maximum(0, affine2_a)
-        pred_a = relu2_a.dot(W3) + b3
+        pred_a = relu1_a.dot(W2) + b2 
 
-        cache = dict(x_a=x_a, affine1_a=affine1_a, relu1_a=relu1_a, affine2_a=affine2_a, relu2_a=relu2_a)
+        cache = dict(x_a=x_a, affine1_a=affine1_a, relu1_a=relu1_a)
         return pred_a, cache
 
     def inner_backward(self, dout_a, weights, cache):
         """just for fine-tuning at the end"""
         w = weights; c = cache
-        W1, b1, W2, b2, W3, b3 = w['W1'], w['b1'], w['W2'], w['b2'], w['W3'], w['b3']
+        W1, b1, W2, b2 = w['W1'], w['b1'], w['W2'], w['b2']
 
-        drelu2_a = dout_a.dot(W3.T)
-        dW3 = cache['relu2_a'].T.dot(dout_a)
-        db3 = np.sum(dout_a, axis=0)
-
-        daffine2_a = np.where(cache['affine2_a'] > 0, drelu2_a, 0)
-
-        drelu1_a = daffine2_a.dot(W2.T)
+        drelu1_a = dout_a.dot(W2.T)
         dW2 = cache['relu1_a'].T.dot(dout_a)
         db2 = np.sum(dout_a, axis=0)
 
@@ -112,14 +95,12 @@ class Network(object):
         new_weights['b1'] = b1 - self.ALPHA*self.normalized(db1)
         new_weights['W2'] = W2 - self.ALPHA*self.normalized(dW2)
         new_weights['b2'] = b2 - self.ALPHA*self.normalized(db2)
-        new_weights['W3'] = W3 - self.ALPHA*self.normalized(dW3)
-        new_weights['b3'] = b3 - self.ALPHA*self.normalized(db3)
         return new_weights
 
 
     def meta_forward(self, x_a, x_b, label_a, weights, cache=None):
         w = weights
-        W1, b1, W2, b2, W3, b3 = w['W1'], w['b1'], w['W2'], w['b2'], w['W3'], w['b3']
+        W1, b1, W2, b2 = w['W1'], w['b1'], w['W2'], w['b2']
 
         # standard forward and backward computations
         # (a)
@@ -127,15 +108,9 @@ class Network(object):
 
         dout_a = 2*(pred_a - label_a)
 
-        dW3 = inner_cache['relu2_a'].T.dot(dout_a)
-        db3 = np.sum(dout_a, axis=0)
-        drelu2_a = dout_a.dot(W3.T)
-
-        daffine2_a = np.where(inner_cache['affine2_a'] > 0, drelu2_a, 0)
-
-        dW2 = inner_cache['relu1_a'].T.dot(daffine2_a)
-        db2 = np.sum(daffine2_a, axis=0)
-        drelu1_a = daffine2_a.dot(W2.T)
+        drelu1_a = dout_a.dot(W2.T)
+        dW2 = inner_cache['relu1_a'].T.dot(dout_a)
+        db2 = np.sum(dout_a, axis=0)
 
         daffine1_a = np.where(inner_cache['affine1_a'] > 0, drelu1_a, 0)
 
@@ -150,99 +125,64 @@ class Network(object):
         b1_prime = b1 - self.ALPHA*db1
         W2_prime = W2 - self.ALPHA*dW2
         b2_prime = b2 - self.ALPHA*db2
-        W3_prime = W3 - self.ALPHA*dW3
-        b3_prime = b3 - self.ALPHA*db3
 
         affine1_b = x_b.dot(W1_prime) + b1_prime
         relu1_b = np.maximum(0, affine1_b)
-        affine2_b = relu1_b.dot(W2_prime) + b2_prime
-        relu2_b = np.maximum(0, affine2_b)
-        pred_b = relu2_b.dot(W3_prime) + b3_prime
+        pred_b = relu1_b.dot(W2_prime) + b2_prime
 
         if cache:
-            outer_cache = dict(dout_a=dout_a, x_b=x_b, affine1_b=affine1_b, relu1_b=relu1_b, affine2_b=affine2_b, relu2_b=relu2_b, daffine2_a=daffine2_a, W2_prime=W2_prime, W3_prime=W3_prime)
+            outer_cache = dict(dout_a=dout_a, x_b=x_b, affine1_b=affine1_b, relu1_b=relu1_b, W2_prime=W2_prime)
             return pred_b, {**inner_cache, **outer_cache}
         else:
             return pred_b
     
     def meta_backward(self, dout_b, weights, cache, grads=None):
         c = cache; w = weights # short 
-        W1, b1, W2, b2, W3, b3 = w['W1'], w['b1'], w['W2'], w['b2'], w['W3'], w['b3']
+        W1, b1, W2, b2 = w['W1'], w['b1'], w['W2'], w['b2']
 
         # deriv w.r.t b (lower half)
-        # d 3rd layer
-        drelu2_b = dout_b.dot(c['W3_prime'].T)
-        dW3_prime = c['relu2_b'].T.dot(dout_b)
-        db3_prime = np.sum(dout_b, axis=0)
-
-        daffine2_b = np.where(c['affine2_b'] > 0, drelu2_b, 0)
-
-        # d 2rd layer
-        drelu1_b = daffine2_b.dot(c['W2_prime'].T)
-        dW2_prime = c['relu1_b'].T.dot(daffine2_b)
-        db2_prime = np.sum(daffine2_b, axis=0)
+        # d 1st layer
+        dW2_prime = c['relu1_b'].T.dot(dout_b)
+        db2_prime = np.sum(dout_b, axis=0)
+        drelu1_b = dout_b.dot(c['W2_prime'].T)
 
         daffine1_b = np.where(c['affine1_b'] > 0, drelu1_b, 0)
-
-        # d 1st layer
+        # d 2nd layer
         dW1_prime = c['x_b'].T.dot(daffine1_b)
         db1_prime = np.sum(daffine1_b, axis=0)
 
         # deriv w.r.t a (upper half)
+
         # going back through the gradient descent step
         dW1 = dW1_prime
         db1 = db1_prime
         dW2 = dW2_prime
         db2 = db2_prime
-        dW3 = dW3_prime
-        db3 = db3_prime
 
         ddW1 = dW1_prime * -self.ALPHA
         ddb1 = db1_prime * -self.ALPHA
         ddW2 = dW2_prime * -self.ALPHA
         ddb2 = db2_prime * -self.ALPHA
-        ddW3 = dW3_prime * -self.ALPHA
-        ddb3 = db3_prime * -self.ALPHA
 
         # backpropping through the first backprop
+        ddout_a = c['relu1_a'].dot(ddW2)
+        ddout_a += ddb2
+        drelu1_a = c['dout_a'].dot(ddW2.T) # shortcut back because of the grad dependency
 
-        # start with dW1's
-        #dx = c['daffine1_a'].dot(ddW1.T) # don't need it unless we backprop through input (x)
         ddaffine1_a = c['x_a'].dot(ddW1) 
         ddaffine1_a += ddb1
-
         ddrelu1_a = np.where(c['affine1_a'] > 0, ddaffine1_a, 0)
 
-        ddaffine2_a = ddrelu1_a.dot(W2)
-        dW2 += ddrelu1_a.T.dot(c['daffine2_a'])
+        dW2 += ddrelu1_a.T.dot(c['dout_a'])
 
-        # dW2's
-        drelu1_a = c['daffine2_a'].dot(ddW2.T) # shortcut back because of the grad dependency
-        ddaffine2_a += ddb2
-        ddaffine2_a += c['relu1_a'].dot(ddW2)
+        ddout_a += ddrelu1_a.dot(W2)
 
-        ddrelu2_a = np.where(c['affine2_a'] > 0, ddaffine2_a, 0)
+        dpred_a = ddout_a * 2 # = dout_a
 
-        ddout_a = ddrelu2_a.dot(W3)
-        dW3 += ddrelu2_a.T.dot(c['dout_a'])
+        dW2 += c['relu1_a'].T.dot(dpred_a)
+        db2 += np.sum(dpred_a, axis=0)
 
-        # dW3's
-        drelu2_a = c['dout_a'].dot(ddW3.T) # shortcut back because of the grad dependency
-        ddout_a += ddb3
-        ddout_a += c['relu2_a'].dot(ddW3)
-
-        # back through the first forward
-        dpred_a = ddout_a * 2 
-
-        drelu2_a += dpred_a.dot(W3.T)
-        db3 += np.sum(dpred_a, axis=0)
-        dW3 += c['relu2_a'].T.dot(dpred_a)
-
-        daffine2_a = np.where(c['affine2_a'] > 0, drelu2_a, 0)
-
-        drelu1_a += daffine2_a.dot(W2.T)
-        dW2 += c['relu1_a'].T.dot(daffine2_a)
-        db2 += np.sum(daffine2_a, axis=0)
+        drelu1_a += dpred_a.dot(W2.T)
 
         daffine1_a = np.where(c['affine1_a'] > 0, drelu1_a, 0)
 
@@ -255,13 +195,11 @@ class Network(object):
             grads['b1'] += self.normalized(db1)
             grads['W2'] += self.normalized(dW2)
             grads['b2'] += self.normalized(db2)
-            grads['W3'] += self.normalized(dW3)
-            grads['b3'] += self.normalized(db3)
 
    
 def gradcheck():
     # Test the network gradient 
-    nn = Network(normalized=lambda x: x) # don't normalize gradients so we can check validity
+    nn = Network(normalized=lambda x: x)
     grads = GradDict()
 
     np.random.seed(231)
@@ -270,10 +208,8 @@ def gradcheck():
     label = np.random.randn(15, 1)
     W1 = np.random.randn(1, 40)
     b1 = np.random.randn(40)
-    W2 = np.random.randn(40, 40)
-    b2 = np.random.randn(40)
-    W3 = np.random.randn(40, 1)
-    b3 = np.random.randn(1)
+    W2 = np.random.randn(40, 1)
+    b2 = np.random.randn(1)
 
     dout = np.random.randn(15, 1)
 
@@ -282,20 +218,16 @@ def gradcheck():
     w['b1'] = b1
     w['W2'] = W2
     w['b2'] = b2
-    w['W3'] = W3
-    w['b3'] = b3
 
     def rep_param(weights, name, val):
         clean_params = copy.deepcopy(weights)
         clean_params[name] = val
         return clean_params
 
-    dW1_num = eval_numerical_gradient_array(lambda w: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'W1', w)), W1, dout, h=1e-5)
-    db1_num = eval_numerical_gradient_array(lambda b: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'b1', b)), b1, dout, h=1e-5)
-    dW2_num = eval_numerical_gradient_array(lambda w: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'W2', w)), W2, dout, h=1e-5)
-    db2_num = eval_numerical_gradient_array(lambda b: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'b2', b)), b2, dout, h=1e-5)
-    dW3_num = eval_numerical_gradient_array(lambda w: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'W3', w)), W3, dout, h=1e-5)
-    db3_num = eval_numerical_gradient_array(lambda b: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'b3', b)), b3, dout, h=1e-5)
+    dW1_num = eval_numerical_gradient_array(lambda w: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'W1', w)), W1, dout)
+    db1_num = eval_numerical_gradient_array(lambda b: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'b1', b)), b1, dout)
+    dW2_num = eval_numerical_gradient_array(lambda w: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'W2', w)), W2, dout)
+    db2_num = eval_numerical_gradient_array(lambda b: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'b2', b)), b2, dout)
 
     out, cache = nn.meta_forward(x_a, x_b, label, weights, cache=True)
     nn.meta_backward(dout, weights, cache, grads)
@@ -307,8 +239,6 @@ def gradcheck():
     print('db1 error: ', rel_error(db1_num, grads['b1']))
     print('dW2 error: ', rel_error(dW2_num, grads['W2']))
     print('db2 error: ', rel_error(db2_num, grads['b2']))
-    print('dW3 error: ', rel_error(dW3_num, grads['W3']))
-    print('db3 error: ', rel_error(db3_num, grads['b3']))
     print()
 
 def test():
