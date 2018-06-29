@@ -330,7 +330,7 @@ def test():
     random_weights = build_weights()
 
     # values for fine-tuning step
-    N = 15
+    N = 10
     sin_gen = SinusoidGenerator(5*N, 1) 
     x, y, amp, phase = map(lambda x: x[0], sin_gen.generate()) # grab all the first elems
     xs = np.split(x, N)
@@ -398,6 +398,7 @@ def test():
     #plt.plot(x_vals, y_random, 'g--', label='random')
     #plt.plot(x_vals, y_new_random, 'g-', label='new_random')
     plt.legend()
+    plt.title("MAML sinusoid matching after {} fine-tuning update".format(N))
     plt.show()
 
 
