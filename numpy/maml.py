@@ -17,11 +17,11 @@ from utils.data_generator import SinusoidGenerator
 # TODO: refactor the inner_backward to maybe be used in the meta_backward, though I kind of don't like that it is all modularize, though I kind of do.
 
 
-
-
 # this will create a special dictionary that returns 0 if the element is not set, instead of error
 # (it makes the code for updating gradients simpler)
 GradDict = lambda: defaultdict(lambda: 0) 
+
+normalize = lambda x: (x - x.mean()) / (x.std() + 1e-8)
 
 def build_weights(hidden_dim=200):
     """Return weights to be used in forward pass"""
@@ -59,8 +59,9 @@ class Network(object):
 
     Hard-code operations for a 2 layer neural network
     """
-    def __init__(self, alpha=0.01):
+    def __init__(self, alpha=0.01, normalized=normalize):
         self.ALPHA = alpha
+        self.normalized = normalized
 
     def inner_forward(self, x_a, w):
         """submodule for forward pass"""
@@ -89,10 +90,10 @@ class Network(object):
 
         # grad steps
         new_weights = {}
-        new_weights['W1'] = W1 - self.ALPHA*dW1
-        new_weights['b1'] = b1 - self.ALPHA*db1
-        new_weights['W2'] = W2 - self.ALPHA*dW2
-        new_weights['b2'] = b2 - self.ALPHA*db2
+        new_weights['W1'] = W1 - self.ALPHA*self.normalized(dW1)
+        new_weights['b1'] = b1 - self.ALPHA*self.normalized(db1)
+        new_weights['W2'] = W2 - self.ALPHA*self.normalized(dW2)
+        new_weights['b2'] = b2 - self.ALPHA*self.normalized(db2)
         return new_weights
 
 
@@ -189,15 +190,15 @@ class Network(object):
 
         if grads is not None:
             # update gradients 
-            grads['W1'] += dW1
-            grads['b1'] += db1
-            grads['W2'] += dW2
-            grads['b2'] += db2
+            grads['W1'] += self.normalized(dW1)
+            grads['b1'] += self.normalized(db1)
+            grads['W2'] += self.normalized(dW2)
+            grads['b2'] += self.normalized(db2)
 
    
 def gradcheck():
     # Test the network gradient 
-    nn = Network()
+    nn = Network(normalized=lambda x: x)
     grads = GradDict()
 
     np.random.seed(231)
@@ -246,32 +247,57 @@ def test():
     https://arxiv.org/pdf/1703.03400.pdf
     """ 
     nn = Network()
-    weights = load_weights(FLAGS.weight_path)
-    optimizer = AdamOptimizer(weights, learning_rate=FLAGS.learning_rate)
+    pre_weights = load_weights(FLAGS.weight_path)
+    random_weights = build_weights()
 
     # values for fine-tuning step
-    sin_gen = SinusoidGenerator(5, 1) 
+    N = 10
+    sin_gen = SinusoidGenerator(5*N, 1) 
     x, y, amp, phase = map(lambda x: x[0], sin_gen.generate()) # grab all the first elems
+    xs = np.split(x, N)
+    ys = np.split(y, N)
 
-    grads = GradDict()
+    new_weights = pre_weights.copy()
+    new_random_weights = random_weights.copy()
+    for i in range(len(xs)):
+        x = xs[i]
+        y = ys[i]
+        grads = GradDict()
+        pred, cache = nn.inner_forward(x, new_weights)
+        loss = (pred - y)**2
+        dout = 2*(pred - y)
+        new_weights = nn.inner_backward(dout, new_weights, cache)
 
-    pred, cache = nn.inner_forward(x, weights)
-    loss = (pred - y)**2
-    dout = 2*(pred - y)
-
-    new_weights = nn.inner_backward(dout, weights, cache)
+    for i in range(len(xs)):
+        x = xs[i]
+        y = ys[i]
+        grads = GradDict()
+        pred, cache = nn.inner_forward(x, new_random_weights)
+        loss = (pred - y)**2
+        dout = 2*(pred - y)
+        new_random_weights = nn.inner_backward(dout, new_random_weights, cache)
 
 
     sine_true = lambda x: amp*np.sin(x - phase)
     sine_nn = lambda x: nn.inner_forward(x, new_weights)[0]
+    sine_pre = lambda x: nn.inner_forward(x, pre_weights)[0]
+    sine_random = lambda x: nn.inner_forward(x, random_weights)[0]
+    sine_new_random = lambda x: nn.inner_forward(x, new_random_weights)[0]
 
     x_vals = np.linspace(-5, 5)
 
     y_true = np.apply_along_axis(sine_true, 0, x_vals)
     y_nn = np.array([sine_nn(np.array(x)) for x in x_vals]).squeeze()
+    y_pre = np.array([sine_pre(np.array(x)) for x in x_vals]).squeeze()
+    y_random = np.array([sine_random(np.array(x)) for x in x_vals]).squeeze()
+    y_new_random = np.array([sine_new_random(np.array(x)) for x in x_vals]).squeeze()
 
-    plt.plot(x_vals, y_true)
-    plt.plot(x_vals, y_nn)
+    plt.plot(x_vals, y_true, 'k', label='{:.2f}sin(x - {:.2f})'.format(amp, phase))
+    plt.plot(x_vals, y_pre, 'r--', label='pre-update')
+    plt.plot(x_vals, y_nn, 'r-', label='post-update')
+    plt.plot(x_vals, y_random, 'g--', label='random')
+    plt.plot(x_vals, y_new_random, 'g-', label='new_random')
+    plt.legend()
     plt.show()
 
 
@@ -282,9 +308,14 @@ def main():
 
     sin_gen = SinusoidGenerator(10, 25)  # update_batch * 2, meta batch size
 
-    for itr in range(int(1e5)):
-        # create a minibatch of size 25, with 10 points
 
+    lr = lambda x: x * FLAGS.learning_rate
+
+    nitr = 1e4
+    for itr in range(int(nitr)):
+        frac = 1.0 - (itr / nitr)
+
+        # create a minibatch of size 25, with 10 points
         batch_x, batch_y, amp, phase = sin_gen.generate()
 
         inputa = batch_x[:, :5, :]
@@ -301,7 +332,7 @@ def main():
             losses.append((pred_b - lb)**2)
             dout_b = 2*(pred_b - lb)
             nn.meta_backward(dout_b, weights, cache, grads)
-        optimizer.apply_gradients(weights, grads)
+        optimizer.apply_gradients(weights, grads, learning_rate=lr(frac))
         if itr % 100 == 0:
             print("[itr: {}] Loss = {}".format(itr, np.sum(losses)))
 

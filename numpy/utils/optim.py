@@ -99,8 +99,10 @@ class AdamOptimizer():
             d = {k: v for k, v in self.optimization_config.items()}
             self.adam_configs[p] = d
 
-    def apply_gradients(self, params, grads):
+    def apply_gradients(self, params, grads, learning_rate=None):
         for p in params: 
+            if learning_rate is not None:
+                self.adam_configs[p]['learning_rate'] = learning_rate
             next_w, self.adam_configs[p] = adam(params[p], grads[p], config=self.adam_configs[p])
             params[p] = next_w
 
