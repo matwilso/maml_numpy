@@ -64,7 +64,7 @@ def load_weights(filename, quiet=False):
 class Network(object):
     """BYOW: Bring Your Own Weights
 
-    Hard-code operations for a 2 layer neural network
+    Hard-code operations for a 3 layer neural network
     """
     def __init__(self, alpha=0.01, normalized=normalize):
         self.ALPHA = alpha
