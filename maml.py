@@ -11,31 +11,25 @@ import argparse
 from collections import defaultdict
 
 from utils.optim import AdamOptimizer
-from utils.common import GradDict # just automate some element checking (overkill)
 from utils.gradient_check import eval_numerical_gradient, eval_numerical_gradient_array, rel_error
 from utils.data_generator import SinusoidGenerator
 
-
 """
+
+
 
 I hard-coded the full meta forward and backward passes of training, using a 3-layer neural
 network.  This can solve the toy sinusoid meta-learning problem presented in the 
 MAML paper.
 
-
 """
 
-
-
-
-# TODO: probably add some plotting or something that shows that it actually works, rather than just the loss. Basically add a test. 
-# TODO: how would I adapt this to be able to take more than one gradient step 
 # TODO: refactor the inner_backward to maybe be used in the meta_backward, though I kind of don't like that it is all modularize, though I kind of do.  this could be added right 
 # after the inner_forward in the meta_forward, and it would have to cache stuff
 # TODO: clean up cache to maybe be list that takes a subset of locals()
 
-# this will create a special dictionary that returns 0 if the element is not set, instead of error
-# (it makes the code for updating gradients simpler)
+
+# special dictionary to return 0 if element does not exist (makes gradient code simpler)
 GradDict = lambda: defaultdict(lambda: 0) 
 
 normalize = lambda x: (x - x.mean()) / (x.std() + 1e-8)
@@ -336,6 +330,7 @@ def test():
     basically what they show in Figure 2 of:
     https://arxiv.org/pdf/1703.03400.pdf
     """ 
+    import ipdb; ipdb.set_trace()
     nn = Network()
     pre_weights = load_weights(FLAGS.weight_path)
     baseline_weights = load_weights('baseline_'+FLAGS.weight_path)

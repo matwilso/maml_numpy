@@ -8,14 +8,8 @@ import argparse
 from collections import defaultdict
 
 from utils.optim import AdamOptimizer
-from utils.common import GradDict # just automate some element checking (overkill)
 from utils.gradient_check import eval_numerical_gradient, eval_numerical_gradient_array, rel_error
 from utils.data_generator import SinusoidGenerator
-
-# TODO: probably add some plotting or something that shows that it actually works, rather than just the loss. Basically add a test. 
-# TODO: how would I adapt this to be able to take more than one gradient step 
-# TODO: refactor the inner_backward to maybe be used in the meta_backward, though I kind of don't like that it is all modularize, though I kind of do.
-# TODO: add more capcity
 
 
 # this will create a special dictionary that returns 0 if the element is not set, instead of error
