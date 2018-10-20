@@ -18,6 +18,7 @@ logic without the backprop abstracted away by an autograd package like TensorFlo
 
 
 <a id="results"/>
+
 ## Results
 
 To verify my implementation, I test on the sinusoid task from [Section 5.1](https://arxiv.org/pdf/1703.03400.pdf)
@@ -63,6 +64,7 @@ in [Meta-Learning And Universality](https://arxiv.org/pdf/1710.11622.pdf).
 This maml_2layer.py file is shorter and easier to understand, but does not produce good results.
 
 <a id="whatismaml"/>
+
 ## What is MAML?
 
 ### Introduction
@@ -175,6 +177,7 @@ Particularly, being able to use a learned loss is extremely interesting.
 Check out MIL and DAML.
 
 <a id="derivation"/>
+
 ## Derivation
 
 Here is a diagram showing the derivation.
