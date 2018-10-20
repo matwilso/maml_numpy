@@ -15,26 +15,27 @@ from utils.gradient_check import eval_numerical_gradient, eval_numerical_gradien
 from utils.data_generator import SinusoidGenerator
 
 """
+This file contains logic for training a fully-connected neural network with
+2 hidden layers using the Model-Agnostic Meta-Learning (MAML) algorithm.
 
+It is designed to solve the toy sinusoid meta-learning problem presented in the MAML paper, 
+and uses the same architecture as presented in the paper.
 
+Passing the `--gradcheck=1` flag, will run finite differences gradient check
+on the meta forward and backward to ensure correct implementation.
 
-I hard-coded the full meta forward and backward passes of training, using a 3-layer neural
-network.  This can solve the toy sinusoid meta-learning problem presented in the 
-MAML paper.
-
+After training a network, you can pass the `--test=1` flag to compare against
+a joint-trained and random network baseline.
 """
 
 # TODO: refactor the inner_backward to maybe be used in the meta_backward, though I kind of don't like that it is all modularize, though I kind of do.  this could be added right 
 # after the inner_forward in the meta_forward, and it would have to cache stuff
-# TODO: clean up cache to maybe be list that takes a subset of locals()
-
 
 # special dictionary to return 0 if element does not exist (makes gradient code simpler)
 GradDict = lambda: defaultdict(lambda: 0) 
-
 normalize = lambda x: (x - x.mean()) / (x.std() + 1e-8)
 
-def build_weights(hidden_dims=(40, 40)):
+def build_weights(hidden_dims=(64, 64)):
     """Return weights to be used in forward pass"""
     # Initialize all weights (model params) with "Xavier Initialization" 
     # weight matrix init = uniform(-1, 1) / sqrt(layer_input)
@@ -47,7 +48,6 @@ def build_weights(hidden_dims=(40, 40)):
     d['b2'] = np.zeros(H2)
     d['W3'] = (-1 + 2*np.random.rand(H2, 1)) / np.sqrt(H2)
     d['b3'] = np.zeros(1)
-
 
     # Cast all parameters to the correct datatype
     for k, v in d.items():
@@ -67,24 +67,26 @@ def load_weights(filename, quiet=False):
         print('weights loaded from {}'.format(filename))
     return weights
 
-
 class Network(object):
     """
     Hard-code operations for a 3 layer neural network
     """
-    def __init__(self, alpha=0.01, normalized=normalize):
-        self.ALPHA = alpha
-        self.normalized = normalized
+    def __init__(self, alpha=0.01, normalize=normalize):
+        self.alpha = alpha  # inner learning rate
+        self.normalize = normalize  # function to normalize gradients before applying them to weights (helps with stability)
 
     def inner_forward(self, x_a, weights):
-        """submodule for forward pass"""
+        """Submodule for forward pass. This is what standard forward pass of network looks like"""
         w = weights
         W1, b1, W2, b2, W3, b3 = w['W1'], w['b1'], w['W2'], w['b2'], w['W3'], w['b3']
 
+        # layer 1
         affine1_a = x_a.dot(W1) + b1
         relu1_a = np.maximum(0, affine1_a)
+        # layer 2
         affine2_a = relu1_a.dot(W2) + b2 
         relu2_a = np.maximum(0, affine2_a)
+        # layer 3
         pred_a = relu2_a.dot(W3) + b3
 
         cache = dict(x_a=x_a, affine1_a=affine1_a, relu1_a=relu1_a, affine2_a=affine2_a, relu2_a=relu2_a)
@@ -113,20 +115,20 @@ class Network(object):
         # grad steps
         if grads is None:
             new_weights = {}
-            new_weights['W1'] = W1 - self.ALPHA*self.normalized(dW1)
-            new_weights['b1'] = b1 - self.ALPHA*self.normalized(db1)
-            new_weights['W2'] = W2 - self.ALPHA*self.normalized(dW2)
-            new_weights['b2'] = b2 - self.ALPHA*self.normalized(db2)
-            new_weights['W3'] = W3 - self.ALPHA*self.normalized(dW3)
-            new_weights['b3'] = b3 - self.ALPHA*self.normalized(db3)
+            new_weights['W1'] = W1 - self.alpha*self.normalize(dW1)
+            new_weights['b1'] = b1 - self.alpha*self.normalize(db1)
+            new_weights['W2'] = W2 - self.alpha*self.normalize(dW2)
+            new_weights['b2'] = b2 - self.alpha*self.normalize(db2)
+            new_weights['W3'] = W3 - self.alpha*self.normalize(dW3)
+            new_weights['b3'] = b3 - self.alpha*self.normalize(db3)
             return new_weights
         else:
-            grads['W1'] += self.normalized(dW1)
-            grads['b1'] += self.normalized(db1)
-            grads['W2'] += self.normalized(dW2)
-            grads['b2'] += self.normalized(db2)
-            grads['W3'] += self.normalized(dW3)
-            grads['b3'] += self.normalized(db3)
+            grads['W1'] += self.normalize(dW1)
+            grads['b1'] += self.normalize(db1)
+            grads['W2'] += self.normalize(dW2)
+            grads['b2'] += self.normalize(db2)
+            grads['W3'] += self.normalize(dW3)
+            grads['b3'] += self.normalize(db3)
             return grads
 
 
@@ -159,12 +161,12 @@ class Network(object):
         # (b)
 
         # grad steps
-        W1_prime = W1 - self.ALPHA*dW1
-        b1_prime = b1 - self.ALPHA*db1
-        W2_prime = W2 - self.ALPHA*dW2
-        b2_prime = b2 - self.ALPHA*db2
-        W3_prime = W3 - self.ALPHA*dW3
-        b3_prime = b3 - self.ALPHA*db3
+        W1_prime = W1 - self.alpha*dW1
+        b1_prime = b1 - self.alpha*db1
+        W2_prime = W2 - self.alpha*dW2
+        b2_prime = b2 - self.alpha*db2
+        W3_prime = W3 - self.alpha*dW3
+        b3_prime = b3 - self.alpha*db3
 
         affine1_b = x_b.dot(W1_prime) + b1_prime
         relu1_b = np.maximum(0, affine1_b)
@@ -210,12 +212,12 @@ class Network(object):
         dW3 = dW3_prime
         db3 = db3_prime
 
-        ddW1 = dW1_prime * -self.ALPHA
-        ddb1 = db1_prime * -self.ALPHA
-        ddW2 = dW2_prime * -self.ALPHA
-        ddb2 = db2_prime * -self.ALPHA
-        ddW3 = dW3_prime * -self.ALPHA
-        ddb3 = db3_prime * -self.ALPHA
+        ddW1 = dW1_prime * -self.alpha
+        ddb1 = db1_prime * -self.alpha
+        ddW2 = dW2_prime * -self.alpha
+        ddb2 = db2_prime * -self.alpha
+        ddW3 = dW3_prime * -self.alpha
+        ddb3 = db3_prime * -self.alpha
 
         # backpropping through the first backprop
 
@@ -264,17 +266,17 @@ class Network(object):
 
         if grads is not None:
             # update gradients 
-            grads['W1'] += self.normalized(dW1)
-            grads['b1'] += self.normalized(db1)
-            grads['W2'] += self.normalized(dW2)
-            grads['b2'] += self.normalized(db2)
-            grads['W3'] += self.normalized(dW3)
-            grads['b3'] += self.normalized(db3)
+            grads['W1'] += self.normalize(dW1)
+            grads['b1'] += self.normalize(db1)
+            grads['W2'] += self.normalize(dW2)
+            grads['b2'] += self.normalize(db2)
+            grads['W3'] += self.normalize(dW3)
+            grads['b3'] += self.normalize(db3)
 
    
 def gradcheck():
     # Test the network gradient 
-    nn = Network(normalized=lambda x: x) # don't normalize gradients so we can check validity
+    nn = Network(normalize=lambda x: x) # don't normalize gradients so we can check validity 
     grads = GradDict()
 
     np.random.seed(231)
