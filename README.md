@@ -5,8 +5,7 @@ in raw numpy.  I made this to better understand the algorithm and what exactly i
 the forward and backward passes following conventions from [CS231n](http://cs231n.github.io/).
 
 This code is just a rough sketch to understand the algorithm better, so it works, but 
-is not optimized or well parameterized.  The forward and backward passes and 
-number of layers are hard-coded.
+is not optimized or well parameterized.  
 
 This turned out to be pretty interesting and I found it helps to see the algorithm 
 logic without the backprop abstracted away by an autograd package like TensorFlow.
@@ -70,16 +69,27 @@ This maml_2layer.py file is shorter and easier to understand, but does not produ
 ### Introduction
 
 Model-Agnostic Meta-Learning is a gradient based meta-learning algorithm.  For an
-overview, see a blog post from the author on meta-learning ([here](https://bair.berkeley.edu/blog/2017/07/18/learning-to-learn/)). 
-But basically meta-learning tries to solve the problem of being able to learn 
-quickly by better incorporating past information, and the goal is to solve
-problems like few-shot learning.  Given a training set with many examples,
-learn a good model so that you can quickly learn a new class and be able to
-distinguish it from other clases.
+overview of meta-learning, see a blog post from the author [here](https://bair.berkeley.edu/blog/2017/07/18/learning-to-learn/). 
+Basically meta-learning tries to solve the problem of being able to learn 
+quickly on new tasks by better incorporating past information from previous tasks.
+It has some similar motivations to transfer learning, but better incentivizes for
+quick adaptation, for example one-shot learning: given a single instance of, for
+example, a Segway, be able to distinguish Segways from other objects in new images.
 
 As opposed to other meta-learning techniques that use RNNs, MAML only uses feed-forward
 networks and gradient descent.  The interesting thing is how it sets up the gradient
 descent scheme to optimize the network for efficient fine-tuning on the meta-test set.
+
+
+TODO: equation of gradient descent
+
+
+
+
+In standard neural network training, we use gradient-descent and backprop.
+
+MAML
+assumes that you will use this same method to 
 
 MAML assumes that you are going to use gradient-descent step (normal neural network training)
 to fine-tune on the meta-test set, and it builds this into the training and meta optimization.

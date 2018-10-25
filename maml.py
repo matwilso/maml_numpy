@@ -28,31 +28,31 @@ After training a network, you can pass the `--test=1` flag to compare against
 a joint-trained and random network baseline.
 """
 
-# TODO: refactor the inner_backward to maybe be used in the meta_backward, though I kind of don't like that it is all modularize, though I kind of do.  this could be added right 
-# after the inner_forward in the meta_forward, and it would have to cache stuff
 
 # special dictionary to return 0 if element does not exist (makes gradient code simpler)
 GradDict = lambda: defaultdict(lambda: 0) 
 normalize = lambda x: (x - x.mean()) / (x.std() + 1e-8)
 
+
+# weight util functions
 def build_weights(hidden_dims=(64, 64)):
-    """Return weights to be used in forward pass"""
-    # Initialize all weights (model params) with "Xavier Initialization" 
+    """Return dictionary on neural network weights"""
+    # Initialize all weights (model params) with "He Initialization" 
     # weight matrix init = uniform(-1, 1) / sqrt(layer_input)
     # bias init = zeros()
     H1, H2 = hidden_dims
-    d = {}
-    d['W1'] = (-1 + 2*np.random.rand(1, H1)) / np.sqrt(1)
-    d['b1'] = np.zeros(H1)
-    d['W2'] = (-1 + 2*np.random.rand(H1, H2)) / np.sqrt(H1)
-    d['b2'] = np.zeros(H2)
-    d['W3'] = (-1 + 2*np.random.rand(H2, 1)) / np.sqrt(H2)
-    d['b3'] = np.zeros(1)
+    w = {}
+    w['W1'] = (-1 + 2*np.random.rand(1, H1)) * np.sqrt(2.0/1)
+    w['b1'] = np.zeros(H1)
+    w['W2'] = (-1 + 2*np.random.rand(H1, H2)) * np.sqrt(2.0/H1)
+    w['b2'] = np.zeros(H2)
+    w['W3'] = (-1 + 2*np.random.rand(H2, 1)) * np.sqrt(2.0/H2)
+    w['b3'] = np.zeros(1)
 
     # Cast all parameters to the correct datatype
-    for k, v in d.items():
-        d[k] = v.astype(np.float32)
-    return d
+    for k, v in w.items():
+        w[k] = v.astype(np.float32)
+    return w
 
 def save_weights(weights, filename, quiet=False):
     with open(filename, 'wb') as f:
@@ -69,17 +69,27 @@ def load_weights(filename, quiet=False):
 
 class Network(object):
     """
-    Hard-code operations for a 3 layer neural network
+    Forward and backward pass logic for 3 layer neural network
+    (see https://github.com/matwilso/maml_numpy#derivation for derivation)
     """
-    def __init__(self, alpha=0.01, normalize=normalize):
-        self.alpha = alpha  # inner learning rate
+
+    def __init__(self, inner_lr=0.01, normalize=normalize):
+        self.inner_lr = inner_lr  # alpha in the paper
         self.normalize = normalize  # function to normalize gradients before applying them to weights (helps with stability)
 
-    def inner_forward(self, x_a, weights):
-        """Submodule for forward pass. This is what standard forward pass of network looks like"""
+    def inner_forward(self, x_a, weights, cache={}):
+        """Submodule for meta_forward. This is just a standard forward pass for a neural net.
+
+        Args:
+            x_a (ndarray): Example or examples of sinusoid from given phase, amplitude.  
+            weights (dict): Dictionary of weights and biases for neural net
+            cache (dict): Pass in dictionary to be updated with values needed in meta_backward
+
+        Returns:
+            pred_a (ndarray): Predicted values for example(s) x_a
+        """
         w = weights
         W1, b1, W2, b2, W3, b3 = w['W1'], w['b1'], w['W2'], w['b2'], w['W3'], w['b3']
-
         # layer 1
         affine1_a = x_a.dot(W1) + b1
         relu1_a = np.maximum(0, affine1_a)
@@ -89,58 +99,75 @@ class Network(object):
         # layer 3
         pred_a = relu2_a.dot(W3) + b3
 
-        cache = dict(x_a=x_a, affine1_a=affine1_a, relu1_a=relu1_a, affine2_a=affine2_a, relu2_a=relu2_a)
-        return pred_a, cache
+        cache.update(dict(x_a=x_a, affine1_a=affine1_a, relu1_a=relu1_a, affine2_a=affine2_a, relu2_a=relu2_a))
+        return pred_a
 
-    def inner_backward(self, dout_a, weights, cache, grads=None):
-        """just for fine-tuning at the end"""
+    def inner_backward_finetune(self, dout_a, weights, cache):
+        """For fine-tuning network at meta-test time
+
+        (Although this has some repeated code from meta_backward, it was hard to 
+        use as a subprocess for meta_backward.  It required several changes in 
+        code and made things more confusing.)
+
+        Args:
+            dout_a (ndarray): Gradient of output (usually loss)
+            weights (dict): Dictionary of weights and biases for neural net
+            cache (dict): Dictionary of relevant values from forward pass
+
+        Returns:
+            dict: New dictionary, with updated weights
+        """
         w = weights; c = cache
         W1, b1, W2, b2, W3, b3 = w['W1'], w['b1'], w['W2'], w['b2'], w['W3'], w['b3']
 
         drelu2_a = dout_a.dot(W3.T)
-        dW3 = cache['relu2_a'].T.dot(dout_a)
+        dW3 = c['relu2_a'].T.dot(dout_a)
         db3 = np.sum(dout_a, axis=0)
 
-        daffine2_a = np.where(cache['affine2_a'] > 0, drelu2_a, 0)
+        daffine2_a = np.where(c['affine2_a'] > 0, drelu2_a, 0)
 
         drelu1_a = daffine2_a.dot(W2.T)
-        dW2 = cache['relu1_a'].T.dot(dout_a)
+        dW2 = c['relu1_a'].T.dot(dout_a)
         db2 = np.sum(dout_a, axis=0)
 
-        daffine1_a = np.where(cache['affine1_a'] > 0, drelu1_a, 0)
+        daffine1_a = np.where(c['affine1_a'] > 0, drelu1_a, 0)
 
         dW1 = c['x_a'].T.dot(daffine1_a)
         db1 = np.sum(daffine1_a, axis=0)
 
-        # grad steps
-        if grads is None:
-            new_weights = {}
-            new_weights['W1'] = W1 - self.alpha*self.normalize(dW1)
-            new_weights['b1'] = b1 - self.alpha*self.normalize(db1)
-            new_weights['W2'] = W2 - self.alpha*self.normalize(dW2)
-            new_weights['b2'] = b2 - self.alpha*self.normalize(db2)
-            new_weights['W3'] = W3 - self.alpha*self.normalize(dW3)
-            new_weights['b3'] = b3 - self.alpha*self.normalize(db3)
-            return new_weights
-        else:
-            grads['W1'] += self.normalize(dW1)
-            grads['b1'] += self.normalize(db1)
-            grads['W2'] += self.normalize(dW2)
-            grads['b2'] += self.normalize(db2)
-            grads['W3'] += self.normalize(dW3)
-            grads['b3'] += self.normalize(db3)
-            return grads
+        new_weights = {}
+        new_weights['W1'] = W1 - self.inner_lr*self.normalize(dW1)
+        new_weights['b1'] = b1 - self.inner_lr*self.normalize(db1)
+        new_weights['W2'] = W2 - self.inner_lr*self.normalize(dW2)
+        new_weights['b2'] = b2 - self.inner_lr*self.normalize(db2)
+        new_weights['W3'] = W3 - self.inner_lr*self.normalize(dW3)
+        new_weights['b3'] = b3 - self.inner_lr*self.normalize(db3)
+        return new_weights
 
 
-    def meta_forward(self, x_a, x_b, label_a, weights, cache=None):
+    def meta_forward(self, x_a, x_b, label_a, weights, cache={}):
+        """Full forward pass for MAML. Does a inner_forward, backprop, and gradient 
+        update.  This will all be backpropped through w.r.t. weights in meta_backward
+
+        Args:
+            x_a (ndarray): Example or examples of sinusoid from given phase, amplitude.  
+            x_b (ndarray): Independent example(s) from same phase, amplitude as x_a's
+            label_a (ndarray): Ground truth labels for x_a
+            weights (dict): Dictionary of weights and biases for neural net
+            cache (dict): Pass in dictionary to be updated with values needed in meta_backward
+
+        Returns:
+            pred_b (ndarray): Predicted values for example(s) x_b
+        """
         w = weights
         W1, b1, W2, b2, W3, b3 = w['W1'], w['b1'], w['W2'], w['b2'], w['W3'], w['b3']
 
         # standard forward and backward computations
-        # (a)
-        pred_a, inner_cache = self.inner_forward(x_a, w)
+        # A: inner
+        inner_cache = {}
+        pred_a = self.inner_forward(x_a, w, inner_cache)
 
-        dout_a = 2*(pred_a - label_a)
+        dout_a = 2*(pred_a - label_a) 
 
         dW3 = inner_cache['relu2_a'].T.dot(dout_a)
         db3 = np.sum(dout_a, axis=0)
@@ -158,33 +185,43 @@ class Network(object):
         db1 = np.sum(daffine1_a, axis=0)
 
         # Forward on fast weights
-        # (b)
+        # B: meta/outer
+        # SGD step is baked into forward pass, representing optimizing through fine-tuning
+        # Theta prime in the paper. Also called fast_weights in Finn's TF implementation
+        W1_prime = W1 - self.inner_lr*dW1
+        b1_prime = b1 - self.inner_lr*db1
+        W2_prime = W2 - self.inner_lr*dW2
+        b2_prime = b2 - self.inner_lr*db2
+        W3_prime = W3 - self.inner_lr*dW3
+        b3_prime = b3 - self.inner_lr*db3
 
-        # grad steps
-        W1_prime = W1 - self.alpha*dW1
-        b1_prime = b1 - self.alpha*db1
-        W2_prime = W2 - self.alpha*dW2
-        b2_prime = b2 - self.alpha*db2
-        W3_prime = W3 - self.alpha*dW3
-        b3_prime = b3 - self.alpha*db3
-
+        # Do another forward pass with the fast weights, to predict B example
         affine1_b = x_b.dot(W1_prime) + b1_prime
         relu1_b = np.maximum(0, affine1_b)
         affine2_b = relu1_b.dot(W2_prime) + b2_prime
         relu2_b = np.maximum(0, affine2_b)
         pred_b = relu2_b.dot(W3_prime) + b3_prime
 
-        if cache:
-            outer_cache = dict(dout_a=dout_a, x_b=x_b, affine1_b=affine1_b, relu1_b=relu1_b, affine2_b=affine2_b, relu2_b=relu2_b, daffine2_a=daffine2_a, W2_prime=W2_prime, W3_prime=W3_prime)
-            return pred_b, {**inner_cache, **outer_cache}
-        else:
-            return pred_b
+        # Cache relevant values for meta backpropping
+        outer_cache = dict(dout_a=dout_a, x_b=x_b, affine1_b=affine1_b, relu1_b=relu1_b, affine2_b=affine2_b, relu2_b=relu2_b, daffine2_a=daffine2_a, W2_prime=W2_prime, W3_prime=W3_prime)
+        cache.update(inner_cache)
+        cache.update(outer_cache)
+
+        return pred_b
     
-    def meta_backward(self, dout_b, weights, cache, grads=None):
-        c = cache; w = weights # short 
+    def meta_backward(self, dout_b, weights, cache, grads=GradDict()):
+        """Full backward pass for MAML. Through all operations from forward pass
+
+        Args:
+            dout_b (ndarray): Gradient signal of network output (usually loss gradient)
+            weights (dict): Dictionary of weights and biases used in forward pass
+            cache (dict): Dictionary of relevant values from forward pass
+            grads (dict): Pass in dictionary to be updated with weight gradients
+        """
+        c = cache; w = weights 
         W1, b1, W2, b2, W3, b3 = w['W1'], w['b1'], w['W2'], w['b2'], w['W3'], w['b3']
 
-        # deriv w.r.t b (lower half)
+        # First, backprop through the B network pass
         # d 3rd layer
         drelu2_b = dout_b.dot(c['W3_prime'].T)
         dW3_prime = c['relu2_b'].T.dot(dout_b)
@@ -203,8 +240,7 @@ class Network(object):
         dW1_prime = c['x_b'].T.dot(daffine1_b)
         db1_prime = np.sum(daffine1_b, axis=0)
 
-        # deriv w.r.t a (upper half)
-        # going back through the gradient descent step
+        # Next, backprop through the gradient descent step
         dW1 = dW1_prime
         db1 = db1_prime
         dW2 = dW2_prime
@@ -212,17 +248,15 @@ class Network(object):
         dW3 = dW3_prime
         db3 = db3_prime
 
-        ddW1 = dW1_prime * -self.alpha
-        ddb1 = db1_prime * -self.alpha
-        ddW2 = dW2_prime * -self.alpha
-        ddb2 = db2_prime * -self.alpha
-        ddW3 = dW3_prime * -self.alpha
-        ddb3 = db3_prime * -self.alpha
+        ddW1 = dW1_prime * -self.inner_lr
+        ddb1 = db1_prime * -self.inner_lr
+        ddW2 = dW2_prime * -self.inner_lr
+        ddb2 = db2_prime * -self.inner_lr
+        ddW3 = dW3_prime * -self.inner_lr
+        ddb3 = db3_prime * -self.inner_lr
 
-        # backpropping through the first backprop
-
+        # Then, backprop through the first backprop
         # start with dW1's
-        #dx = c['daffine1_a'].dot(ddW1.T) # don't need it unless we backprop through input (x)
         ddaffine1_a = c['x_a'].dot(ddW1) 
         ddaffine1_a += ddb1
 
@@ -246,7 +280,7 @@ class Network(object):
         ddout_a += ddb3
         ddout_a += c['relu2_a'].dot(ddW3)
 
-        # back through the first forward
+        # Finally, backprop through the first forward
         dpred_a = ddout_a * 2 
 
         drelu2_a += dpred_a.dot(W3.T)
@@ -264,177 +298,134 @@ class Network(object):
         dW1 += c['x_a'].T.dot(daffine1_a)
         db1 += np.sum(daffine1_a, axis=0)
 
-        if grads is not None:
-            # update gradients 
-            grads['W1'] += self.normalize(dW1)
-            grads['b1'] += self.normalize(db1)
-            grads['W2'] += self.normalize(dW2)
-            grads['b2'] += self.normalize(db2)
-            grads['W3'] += self.normalize(dW3)
-            grads['b3'] += self.normalize(db3)
+        # update gradients 
+        grads['W1'] += self.normalize(dW1)
+        grads['b1'] += self.normalize(db1)
+        grads['W2'] += self.normalize(dW2)
+        grads['b2'] += self.normalize(db2)
+        grads['W3'] += self.normalize(dW3)
+        grads['b3'] += self.normalize(db3)
 
    
 def gradcheck():
     # Test the network gradient 
     nn = Network(normalize=lambda x: x) # don't normalize gradients so we can check validity 
-    grads = GradDict()
-
-    np.random.seed(231)
+    grads = GradDict()  # initialize grads to 0
+    # dummy inputs, labels, and fake backwards gradient signal
     x_a = np.random.randn(15, 1)
     x_b = np.random.randn(15, 1)
     label = np.random.randn(15, 1)
+    dout = np.random.randn(15, 1)
+    # make weights. don't use build_weights here because this is more stable
     W1 = np.random.randn(1, 40)
     b1 = np.random.randn(40)
     W2 = np.random.randn(40, 40)
     b2 = np.random.randn(40)
     W3 = np.random.randn(40, 1)
     b3 = np.random.randn(1)
+    weights = dict(W1=W1, b1=b1, W2=W2, b2=b2, W3=W3, b3=b3)
 
-    dout = np.random.randn(15, 1)
-
-    weights = w = {}
-    w['W1'] = W1
-    w['b1'] = b1
-    w['W2'] = W2
-    w['b2'] = b2
-    w['W3'] = W3
-    w['b3'] = b3
-
+    # helper function to only change a single key of interest for independent finite differences
     def rep_param(weights, name, val):
         clean_params = copy.deepcopy(weights)
         clean_params[name] = val
         return clean_params
 
-    dW1_num = eval_numerical_gradient_array(lambda w: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'W1', w)), W1, dout, h=1e-5)
-    db1_num = eval_numerical_gradient_array(lambda b: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'b1', b)), b1, dout, h=1e-5)
-    dW2_num = eval_numerical_gradient_array(lambda w: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'W2', w)), W2, dout, h=1e-5)
-    db2_num = eval_numerical_gradient_array(lambda b: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'b2', b)), b2, dout, h=1e-5)
-    dW3_num = eval_numerical_gradient_array(lambda w: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'W3', w)), W3, dout, h=1e-5)
-    db3_num = eval_numerical_gradient_array(lambda b: nn.meta_forward(x_a, x_b, label, rep_param(weights, 'b3', b)), b3, dout, h=1e-5)
+    # Evaluate gradients numerically, using finite differences
+    numerical_grads = {}
+    for key in weights:
+        num_grad = eval_numerical_gradient_array(lambda w: nn.meta_forward(x_a, x_b, label, rep_param(weights, key, w)), weights[key], dout, h=1e-5)
+        numerical_grads[key] = num_grad
 
-    out, cache = nn.meta_forward(x_a, x_b, label, weights, cache=True)
+    # Compute neural network gradients
+    cache = {}
+    out = nn.meta_forward(x_a, x_b, label, weights, cache=cache)
     nn.meta_backward(dout, weights, cache, grads)
 
     # The error should be around 1e-10
     print()
-    print('Testing meta-learning NN backward function:')
-    print('dW1 error: ', rel_error(dW1_num, grads['W1']))
-    print('db1 error: ', rel_error(db1_num, grads['b1']))
-    print('dW2 error: ', rel_error(dW2_num, grads['W2']))
-    print('db2 error: ', rel_error(db2_num, grads['b2']))
-    print('dW3 error: ', rel_error(dW3_num, grads['W3']))
-    print('db3 error: ', rel_error(db3_num, grads['b3']))
+    for key in weights:
+        print('d{} error: {}'.format(key, rel_error(numerical_grads[key], grads[key])))
     print()
 
-def test():
-    """take one grad step using a minibatch of size 5 and see how well it works
+def meta_test():
+    """Take one grad step using a minibatch of size 5 and see how well it works
 
-    basically what they show in Figure 2 of:
-    https://arxiv.org/pdf/1703.03400.pdf
+    Basically what they show in Figure 2 of the paper
     """ 
-    import ipdb; ipdb.set_trace()
-    nn = Network()
-    pre_weights = load_weights(FLAGS.weight_path)
-    baseline_weights = load_weights('baseline_'+FLAGS.weight_path)
-    random_weights = build_weights()
+    nn = Network(inner_lr=FLAGS.inner_lr)
 
-    # values for fine-tuning step
+    pre_weights = {}
+
+    pre_weights['maml'] = load_weights(FLAGS.weight_path)
+    pre_weights['baseline'] = load_weights('baseline_'+FLAGS.weight_path)
+    pre_weights['random'] = build_weights()
+
+    # Generate N batches of data, with same shape as training, but that all 
+    # have the same amplitude and phase
     N = 10
-    sin_gen = SinusoidGenerator(5*N, 1) 
-    x, y, amp, phase = map(lambda x: x[0], sin_gen.generate()) # grab all the first elems
+    sinegen = SinusoidGenerator(FLAGS.inner_bs*N, 1) 
+    x, y, amp, phase = map(lambda x: x[0], sinegen.generate()) # grab all the first elems
     xs = np.split(x, N)
     ys = np.split(y, N)
 
-    new_weights = pre_weights.copy()
-    new_random_weights = random_weights.copy()
-    new_baseline_weights = baseline_weights.copy()
-    for i in range(len(xs)):
-        x = xs[i]
-        y = ys[i]
-        grads = GradDict()
-        pred, cache = nn.inner_forward(x, new_weights)
-        loss = (pred - y)**2
-        dout = 2*(pred - y)
-        new_weights = nn.inner_backward(dout, new_weights, cache)
+    # Copy pre-update weights for later comparison
+    deepcopy = lambda weights: {key: weights[key].copy() for key in weights}
+    post_weights = {}
+    for key in pre_weights:
+        post_weights[key] = deepcopy(pre_weights[key])
 
-    for i in range(len(xs)):
-        x = xs[i]
-        y = ys[i]
-        grads = GradDict()
-        pred, cache = nn.inner_forward(x, new_random_weights)
-        loss = (pred - y)**2
-        dout = 2*(pred - y)
-        new_random_weights = nn.inner_backward(dout, new_random_weights, cache)
+    T = 1
+    # Run fine-tuning 
+    for key in post_weights:
+        for t in range(T):
+            for i in range(len(xs)):
+                x = xs[i]
+                y = ys[i]
+                grads = GradDict()
+                cache = {}
+                pred = nn.inner_forward(x, post_weights[key], cache)
+                loss = (pred - y)**2
+                dout = 2*(pred - y)
+                post_weights[key] = nn.inner_backward_finetune(dout, post_weights[key], cache)
 
-    for i in range(len(xs)):
-        x = xs[i]
-        y = ys[i]
-        grads = GradDict()
-        pred, cache = nn.inner_forward(x, new_baseline_weights)
-        loss = (pred - y)**2
-        dout = 2*(pred - y)
-        new_baseline_weights = nn.inner_backward(dout, new_baseline_weights, cache)
-
-
-    sine_true = lambda x: amp*np.sin(x - phase)
-    sine_pre = lambda x: nn.inner_forward(x, pre_weights)[0]
-    sine_nn = lambda x: nn.inner_forward(x, new_weights)[0]
-    sine_pre_baseline = lambda x: nn.inner_forward(x, baseline_weights)[0]
-    sine_baseline = lambda x: nn.inner_forward(x, new_baseline_weights)[0]
-    sine_random = lambda x: nn.inner_forward(x, random_weights)[0]
-    sine_new_random = lambda x: nn.inner_forward(x, new_random_weights)[0]
+    sine_ground = lambda x: amp*np.sin(x - phase)
+    sine_pre_pred = lambda x, key: nn.inner_forward(x, pre_weights[key])[0]
+    sine_post_pred = lambda x, key: nn.inner_forward(x, post_weights[key])[0]
 
     x_vals = np.linspace(-5, 5)
+    y_ground = np.apply_along_axis(sine_ground, 0, x_vals)
 
-    y_true = np.apply_along_axis(sine_true, 0, x_vals)
+    y_pre = np.array([sine_pre_pred(np.array(x), 'maml') for x in x_vals]).squeeze()
+    y_nn = np.array([sine_post_pred(np.array(x), 'maml') for x in x_vals]).squeeze()
 
-    y_pre = np.array([sine_pre(np.array(x)) for x in x_vals]).squeeze()
-    y_nn = np.array([sine_nn(np.array(x)) for x in x_vals]).squeeze()
-
-    y_pre_baseline = np.array([sine_pre_baseline(np.array(x)) for x in x_vals]).squeeze()
-    y_baseline = np.array([sine_baseline(np.array(x)) for x in x_vals]).squeeze()
-
-    y_random = np.array([sine_random(np.array(x)) for x in x_vals]).squeeze()
-    y_new_random = np.array([sine_new_random(np.array(x)) for x in x_vals]).squeeze()
-
-    plt.plot(x_vals, y_true, 'k', label='{:.2f}sin(x - {:.2f})'.format(amp, phase))
+    plt.plot(x_vals, y_ground, 'k', label='{:.2f}sin(x - {:.2f})'.format(amp, phase))
     plt.plot(x_vals, y_pre, 'r--', label='pre-update')
     plt.plot(x_vals, y_nn, 'r-', label='post-update')
 
-    plt.plot(x_vals, y_pre_baseline, 'g--', label='baseline')
-    plt.plot(x_vals, y_baseline, 'g-', label='new_baseline')
-
-    #plt.plot(x_vals, y_random, 'g--', label='random')
-    #plt.plot(x_vals, y_new_random, 'g-', label='new_random')
     plt.legend()
     plt.title("MAML sinusoid matching after {} fine-tuning update".format(N))
     plt.show()
 
 
 def train():
-    nn = Network()
+    nn = Network(inner_lr=FLAGS.inner_lr)
     weights = build_weights()
     baseline_weights = build_weights()
-    optimizer = AdamOptimizer(weights, learning_rate=FLAGS.learning_rate)
-    baseline_optimizer = AdamOptimizer(baseline_weights, learning_rate=FLAGS.learning_rate)
+    optimizer = AdamOptimizer(weights, learning_rate=FLAGS.meta_lr)
+    baseline_optimizer = AdamOptimizer(baseline_weights, learning_rate=FLAGS.meta_lr)
 
-    sin_gen = SinusoidGenerator(10, 25)  # update_batch * 2, meta batch size
-
-
-    #lr = lambda x: x * FLAGS.learning_rate
-    lr = lambda x : FLAGS.learning_rate
+    sinegen = SinusoidGenerator(2*FLAGS.inner_bs, 25)  # update_batch * 2, meta batch size
 
     nitr = 1e4
     for itr in range(int(nitr)):
-        frac = 1.0 - (itr / nitr)
-
         # create a minibatch of size 25, with 10 points
-        batch_x, batch_y, amp, phase = sin_gen.generate()
+        batch_x, batch_y, amp, phase = sinegen.generate()
 
-        inputa = batch_x[:, :5, :]
-        labela = batch_y[:, :5, :]
-        inputb = batch_x[:, 5:, :] # b used for testing
-        labelb = batch_y[:, 5:, :]
+        inputa = batch_x[:, :FLAGS.inner_bs :]
+        labela = batch_y[:, :FLAGS.inner_bs :]
+        inputb = batch_x[:, FLAGS.inner_bs :] # b used for testing
+        labelb = batch_y[:, FLAGS.inner_bs :]
         
         # META BATCH
         grads = GradDict() # zero grads
@@ -443,41 +434,40 @@ def train():
         for batch_i in range(len(inputa)):
             ia, la, ib, lb = inputa[batch_i], labela[batch_i], inputb[batch_i], labelb[batch_i]
 
-            pred_b, cache = nn.meta_forward(ia, ib, la, weights, cache=True)
+            cache = {}
+            pred_b = nn.meta_forward(ia, ib, la, weights, cache=cache)
             losses.append((pred_b - lb)**2)
             dout_b = 2*(pred_b - lb)
             nn.meta_backward(dout_b, weights, cache, grads)
 
-
-            baseline_pred_b, baseline_cache = nn.meta_forward(ia, ib, la, baseline_weights, cache=True)
+            baseline_cache = {}
+            baseline_pred_b = nn.meta_forward(ia, ib, la, baseline_weights, cache=baseline_cache)
             #losses.append((pred_b - lb)**2)
             dout_b = 2*(pred_b - lb)
             nn.meta_backward(dout_b, baseline_weights, baseline_cache, baseline_grads)
 
 
-        optimizer.apply_gradients(weights, grads, learning_rate=lr(frac))
+        optimizer.apply_gradients(weights, grads, learning_rate=FLAGS.meta_lr)
         if itr % 100 == 0:
             print("[itr: {}] Loss = {}".format(itr, np.sum(losses)))
-
-    save_weights(weights, FLAGS.weight_path)
-    save_weights(baseline_weights, "baseline_"+FLAGS.weight_path)
+            save_weights(weights, FLAGS.weight_path)
+            save_weights(baseline_weights, "baseline_"+FLAGS.weight_path)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='MAML')
+    parser.add_argument('--seed', type=int, default=0, help='')
     parser.add_argument('--gradcheck', type=int, default=0, help='Run gradient check and other tests')
     parser.add_argument('--test', type=int, default=0, help='Run test on trained network to see if it works')
-    parser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate')
+    parser.add_argument('--meta_lr', type=float, default=1e-3, help='Meta learning rate')
+    parser.add_argument('--inner_lr', type=float, default=1e-3, help='Inner learning rate')
+    parser.add_argument('--inner_bs', type=int, default=10, help='Inner batch size')
     parser.add_argument('--weight_path', type=str, default='trained_maml_weights.pkl', help='File name to save and load weights')
     FLAGS = parser.parse_args()
+    np.random.seed(FLAGS.seed)
     
     if FLAGS.gradcheck:
         gradcheck()
-        exit(0)
-
-    if FLAGS.test:
-        test()
-        exit(0)
-
-    train()
-
-
+    elif FLAGS.test:
+        meta_test()
+    else:
+        train()
