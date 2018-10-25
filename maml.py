@@ -102,7 +102,7 @@ class Network(object):
         cache.update(dict(x_a=x_a, affine1_a=affine1_a, relu1_a=relu1_a, affine2_a=affine2_a, relu2_a=relu2_a))
         return pred_a
 
-    def inner_backward_finetune(self, dout_a, weights, cache):
+    def inner_backward(self, dout_a, weights, cache, grads=GradDict()):
         """For fine-tuning network at meta-test time
 
         (Although this has some repeated code from meta_backward, it was hard to 
@@ -135,13 +135,21 @@ class Network(object):
         dW1 = c['x_a'].T.dot(daffine1_a)
         db1 = np.sum(daffine1_a, axis=0)
 
+        grads['W1'] += self.normalize(dW1)
+        grads['b1'] += self.normalize(db1)
+        grads['W2'] += self.normalize(dW2)
+        grads['b2'] += self.normalize(db2)
+        grads['W3'] += self.normalize(dW3)
+        grads['b3'] += self.normalize(db3)
+
+        # Return new weights (for fine-tuning)
         new_weights = {}
-        new_weights['W1'] = W1 - self.inner_lr*self.normalize(dW1)
-        new_weights['b1'] = b1 - self.inner_lr*self.normalize(db1)
-        new_weights['W2'] = W2 - self.inner_lr*self.normalize(dW2)
-        new_weights['b2'] = b2 - self.inner_lr*self.normalize(db2)
-        new_weights['W3'] = W3 - self.inner_lr*self.normalize(dW3)
-        new_weights['b3'] = b3 - self.inner_lr*self.normalize(db3)
+        new_weights['W1'] = W1 - self.inner_lr*grads['W1']
+        new_weights['b1'] = b1 - self.inner_lr*grads['b1']
+        new_weights['W2'] = W2 - self.inner_lr*grads['W2']
+        new_weights['b2'] = b2 - self.inner_lr*grads['b2']
+        new_weights['W3'] = W3 - self.inner_lr*grads['W3']
+        new_weights['b3'] = b3 - self.inner_lr*grads['b3']
         return new_weights
 
 
@@ -358,14 +366,16 @@ def meta_test():
     pre_weights = {}
 
     pre_weights['maml'] = load_weights(FLAGS.weight_path)
-    pre_weights['baseline'] = load_weights('baseline_'+FLAGS.weight_path)
+    if FLAGS.use_baseline:
+        pre_weights['baseline'] = load_weights('baseline_'+FLAGS.weight_path)
     pre_weights['random'] = build_weights()
 
-    # Generate N batches of data, with same shape as training, but that all 
-    # have the same amplitude and phase
+    # Generate N batches of data, with same shape as training, but that all have the same amplitude and phase
     N = 10
-    sinegen = SinusoidGenerator(FLAGS.inner_bs*N, 1) 
+    #sinegen = SinusoidGenerator(FLAGS.inner_bs*N, 1, config={'input_range':[1.0,5.0]}) 
+    sinegen = SinusoidGenerator(FLAGS.inner_bs*N, 1)
     x, y, amp, phase = map(lambda x: x[0], sinegen.generate()) # grab all the first elems
+    #x, y, amp, phase = map(lambda x: x[0], sinegen.generate()) # grab all the first elems
     xs = np.split(x, N)
     ys = np.split(y, N)
 
@@ -387,7 +397,7 @@ def meta_test():
                 pred = nn.inner_forward(x, post_weights[key], cache)
                 loss = (pred - y)**2
                 dout = 2*(pred - y)
-                post_weights[key] = nn.inner_backward_finetune(dout, post_weights[key], cache)
+                post_weights[key] = nn.inner_backward(dout, post_weights[key], cache)
 
     sine_ground = lambda x: amp*np.sin(x - phase)
     sine_pre_pred = lambda x, key: nn.inner_forward(x, pre_weights[key])[0]
@@ -396,72 +406,89 @@ def meta_test():
     x_vals = np.linspace(-5, 5)
     y_ground = np.apply_along_axis(sine_ground, 0, x_vals)
 
-    y_pre = np.array([sine_pre_pred(np.array(x), 'maml') for x in x_vals]).squeeze()
-    y_nn = np.array([sine_post_pred(np.array(x), 'maml') for x in x_vals]).squeeze()
+    colors = {'maml': 'r', 'baseline': 'b', 'random': 'g'}
+    name = {'maml': 'MAML', 'baseline': 'joint training', 'random': 'random initialization'}
 
-    plt.plot(x_vals, y_ground, 'k', label='{:.2f}sin(x - {:.2f})'.format(amp, phase))
-    plt.plot(x_vals, y_pre, 'r--', label='pre-update')
-    plt.plot(x_vals, y_nn, 'r-', label='post-update')
+    for key in post_weights:
+        y_pre = np.array([sine_pre_pred(np.array(x), key) for x in x_vals]).squeeze()
+        y_nn = np.array([sine_post_pred(np.array(x), key) for x in x_vals]).squeeze()
+        plt.plot(x_vals, y_ground, 'k', label='{:.2f}sin(x - {:.2f})'.format(amp, phase))
+        plt.plot(x_vals, y_pre, colors[key]+'--', label='pre-update')
+        plt.plot(x_vals, y_nn, colors[key]+'-', label='post-update')
 
-    plt.legend()
-    plt.title("MAML sinusoid matching after {} fine-tuning update".format(N))
-    plt.show()
-
+        plt.legend()
+        plt.title('Fine-tuning performance {}'.format(name[key]))
+        plt.show()
 
 def train():
     nn = Network(inner_lr=FLAGS.inner_lr)
     weights = build_weights()
-    baseline_weights = build_weights()
     optimizer = AdamOptimizer(weights, learning_rate=FLAGS.meta_lr)
-    baseline_optimizer = AdamOptimizer(baseline_weights, learning_rate=FLAGS.meta_lr)
+    if FLAGS.use_baseline:
+        baseline_weights = build_weights()
+        baseline_optimizer = AdamOptimizer(baseline_weights, learning_rate=FLAGS.meta_lr)
 
     sinegen = SinusoidGenerator(2*FLAGS.inner_bs, 25)  # update_batch * 2, meta batch size
 
-    nitr = 1e4
-    for itr in range(int(nitr)):
-        # create a minibatch of size 25, with 10 points
-        batch_x, batch_y, amp, phase = sinegen.generate()
+    try:
+        nitr = 1e4
+        for itr in range(int(nitr)):
+            # create a minibatch of size 25, with 10 points
+            batch_x, batch_y, amp, phase = sinegen.generate()
 
-        inputa = batch_x[:, :FLAGS.inner_bs :]
-        labela = batch_y[:, :FLAGS.inner_bs :]
-        inputb = batch_x[:, FLAGS.inner_bs :] # b used for testing
-        labelb = batch_y[:, FLAGS.inner_bs :]
-        
-        # META BATCH
-        grads = GradDict() # zero grads
-        baseline_grads = GradDict() # zero grads
-        losses = []
-        for batch_i in range(len(inputa)):
-            ia, la, ib, lb = inputa[batch_i], labela[batch_i], inputb[batch_i], labelb[batch_i]
-
-            cache = {}
-            pred_b = nn.meta_forward(ia, ib, la, weights, cache=cache)
-            losses.append((pred_b - lb)**2)
-            dout_b = 2*(pred_b - lb)
-            nn.meta_backward(dout_b, weights, cache, grads)
-
-            baseline_cache = {}
-            baseline_pred_b = nn.meta_forward(ia, ib, la, baseline_weights, cache=baseline_cache)
-            #losses.append((pred_b - lb)**2)
-            dout_b = 2*(pred_b - lb)
-            nn.meta_backward(dout_b, baseline_weights, baseline_cache, baseline_grads)
+            inputa = batch_x[:, :FLAGS.inner_bs :]
+            labela = batch_y[:, :FLAGS.inner_bs :]
+            inputb = batch_x[:, FLAGS.inner_bs :] # b used for testing
+            labelb = batch_y[:, FLAGS.inner_bs :]
+            
+            # META BATCH
+            grads = GradDict() # zero grads
+            baseline_grads = GradDict() # zero grads
+            losses = []
+            baseline_losses = []
+            for batch_i in range(len(inputa)):
+                ia, la, ib, lb = inputa[batch_i], labela[batch_i], inputb[batch_i], labelb[batch_i]
+                cache = {}
+                pred_b = nn.meta_forward(ia, ib, la, weights, cache=cache)
+                losses.append((pred_b - lb)**2)
+                dout_b = 2*(pred_b - lb)
+                nn.meta_backward(dout_b, weights, cache, grads)
 
 
-        optimizer.apply_gradients(weights, grads, learning_rate=FLAGS.meta_lr)
-        if itr % 100 == 0:
-            print("[itr: {}] Loss = {}".format(itr, np.sum(losses)))
-            save_weights(weights, FLAGS.weight_path)
-            save_weights(baseline_weights, "baseline_"+FLAGS.weight_path)
+                if FLAGS.use_baseline:
+                    baseline_cache = {}
+                    baseline_i = np.concatenate([ia,ib])
+                    baseline_l = np.concatenate([la,lb])
+                    baseline_pred = nn.inner_forward(baseline_i, baseline_weights, cache=baseline_cache)
+                    baseline_losses.append((baseline_pred - baseline_l)**2)
+                    dout_b = 2*(baseline_pred - baseline_l)
+                    nn.inner_backward(dout_b, baseline_weights, baseline_cache)
+
+            optimizer.apply_gradients(weights, grads, learning_rate=FLAGS.meta_lr)
+            if FLAGS.use_baseline:
+                baseline_optimizer.apply_gradients(baseline_weights, baseline_grads, learning_rate=FLAGS.meta_lr)
+            if itr % 100 == 0:
+                if FLAGS.use_baseline:
+                    print("[itr: {}] MAML loss = {} Baseline loss = {}".format(itr, np.sum(losses), np.sum(baseline_losses)))
+                else:
+                    print("[itr: {}] Loss = {}".format(itr, np.sum(losses)))
+    except KeyboardInterrupt:
+        pass
+    save_weights(weights, FLAGS.weight_path)
+    if FLAGS.use_baseline:
+        save_weights(baseline_weights, "baseline_"+FLAGS.weight_path)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='MAML')
-    parser.add_argument('--seed', type=int, default=0, help='')
+    parser.add_argument('--seed', type=int, default=1, help='')
     parser.add_argument('--gradcheck', type=int, default=0, help='Run gradient check and other tests')
     parser.add_argument('--test', type=int, default=0, help='Run test on trained network to see if it works')
     parser.add_argument('--meta_lr', type=float, default=1e-3, help='Meta learning rate')
     parser.add_argument('--inner_lr', type=float, default=1e-2, help='Inner learning rate')
     parser.add_argument('--inner_bs', type=int, default=5, help='Inner batch size')
     parser.add_argument('--weight_path', type=str, default='trained_maml_weights.pkl', help='File name to save and load weights')
+    parser.add_argument('--use_baseline', type=int, default=1, help='Whether to train a baseline network')
     FLAGS = parser.parse_args()
     np.random.seed(FLAGS.seed)
     

@@ -26,6 +26,9 @@ of the MAML paper.
 I train for _x_ iterations on the training dataset, and then fine-tune on _x_.
 
 
+These figures show comparisons between fine-tuning on 10 minibatches of 5 for MAML,
+a joint-training baseline (trained on same data as MAML
+
 
 These figures show MAML fine-tuning on 10 minibatches of 5, and against a baseline
 that used joint training on the dataset (first plot), and against a random 
