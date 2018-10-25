@@ -37,16 +37,16 @@ normalize = lambda x: (x - x.mean()) / (x.std() + 1e-8)
 # weight util functions
 def build_weights(hidden_dims=(64, 64)):
     """Return dictionary on neural network weights"""
-    # Initialize all weights (model params) with "He Initialization" 
+    # Initialize all weights (model params) with "Xavier Initialization" 
     # weight matrix init = uniform(-1, 1) / sqrt(layer_input)
     # bias init = zeros()
     H1, H2 = hidden_dims
     w = {}
-    w['W1'] = (-1 + 2*np.random.rand(1, H1)) * np.sqrt(2.0/1)
+    w['W1'] = (-1 + 2*np.random.rand(1, H1)) / np.sqrt(1)
     w['b1'] = np.zeros(H1)
-    w['W2'] = (-1 + 2*np.random.rand(H1, H2)) * np.sqrt(2.0/H1)
+    w['W2'] = (-1 + 2*np.random.rand(H1, H2)) / np.sqrt(H1)
     w['b2'] = np.zeros(H2)
-    w['W3'] = (-1 + 2*np.random.rand(H2, 1)) * np.sqrt(2.0/H2)
+    w['W3'] = (-1 + 2*np.random.rand(H2, 1)) / np.sqrt(H2)
     w['b3'] = np.zeros(1)
 
     # Cast all parameters to the correct datatype
@@ -459,8 +459,8 @@ if __name__ == '__main__':
     parser.add_argument('--gradcheck', type=int, default=0, help='Run gradient check and other tests')
     parser.add_argument('--test', type=int, default=0, help='Run test on trained network to see if it works')
     parser.add_argument('--meta_lr', type=float, default=1e-3, help='Meta learning rate')
-    parser.add_argument('--inner_lr', type=float, default=1e-3, help='Inner learning rate')
-    parser.add_argument('--inner_bs', type=int, default=10, help='Inner batch size')
+    parser.add_argument('--inner_lr', type=float, default=1e-2, help='Inner learning rate')
+    parser.add_argument('--inner_bs', type=int, default=5, help='Inner batch size')
     parser.add_argument('--weight_path', type=str, default='trained_maml_weights.pkl', help='File name to save and load weights')
     FLAGS = parser.parse_args()
     np.random.seed(FLAGS.seed)
