@@ -34,9 +34,9 @@ These figures show MAML fine-tuning on 10 minibatches of 5, and against a baseli
 that used joint training on the dataset (first plot), and against a random 
 intialized network (second plot).
 
-![numpy MAML sinusoid baseline](/assets/numpy/maml_baseline.png)
-![numpy MAML sinusoid random](/assets/numpy/maml_random.png)
-
+MAML                       |  Baseline (joint training)|  Random   
+:-------------------------:|:-------------------------:|:----------:|  
+![](/assets/maml.png)  |  ![](/assets/baseline.png) | ![](/assets/random.png)
 
 Here are the commands to the run the code:
 
@@ -82,6 +82,15 @@ example, a Segway, be able to distinguish Segways from other objects in new imag
 As opposed to other meta-learning techniques that use RNNs, MAML only uses feed-forward
 networks and gradient descent.  The interesting thing is how it sets up the gradient
 descent scheme to optimize the network for efficient fine-tuning on the meta-test set.
+
+
+In the simplest case, you can think of it as doing 2 forward passes. It does:
+1. Forward pass with W
+1. Backward pass to compute gradients dWa
+1. Apply gradients dW (using SGD: W' <-- W - alpha\*dWa)
+1. Another forward pass with W'
+1. Backward pass through the whole thing to compute gradients dWb (NOTE: with respect to input weights W, not W'.  This is a second order derivative)
+1. Apply gradients dW' (using Adam: W <-- W - alpha\*dWb)
 
 
 TODO: equation of gradient descent
@@ -193,9 +202,11 @@ Check out MIL and DAML.
 
 ## Derivation
 
-Here is a diagram showing the derivation.
-// TODO: make in inkscape
+Here is a diagram showing the derivation.  This shows an inner forward and
+inner backward pass of a network as a computational graph.  I still need
+to add the gradient update step and 2nd forward pass.
 
+![derivation](/assets/derivation.png)
 
 
 

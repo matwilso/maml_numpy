@@ -175,6 +175,8 @@ class Network(object):
         inner_cache = {}
         pred_a = self.inner_forward(x_a, w, inner_cache)
 
+        # TODO: we could probably add inner_backward here (and add a cache option to inner_backward)
+
         dout_a = 2*(pred_a - label_a) 
 
         dW3 = inner_cache['relu2_a'].T.dot(dout_a)
