@@ -358,7 +358,7 @@ def gradcheck():
         print('d{} error: {}'.format(key, rel_error(numerical_grads[key], grads[key])))
     print()
 
-def meta_test():
+def test():
     """Take one grad step using a minibatch of size 5 and see how well it works
 
     Basically what they show in Figure 2 of the paper
@@ -366,7 +366,6 @@ def meta_test():
     nn = Network(inner_lr=FLAGS.inner_lr)
 
     pre_weights = {}
-
     pre_weights['maml'] = load_weights(FLAGS.weight_path)
     if FLAGS.use_baseline:
         pre_weights['baseline'] = load_weights('baseline_'+FLAGS.weight_path)
@@ -377,7 +376,6 @@ def meta_test():
     #sinegen = SinusoidGenerator(FLAGS.inner_bs*N, 1, config={'input_range':[1.0,5.0]}) 
     sinegen = SinusoidGenerator(FLAGS.inner_bs*N, 1)
     x, y, amp, phase = map(lambda x: x[0], sinegen.generate()) # grab all the first elems
-    #x, y, amp, phase = map(lambda x: x[0], sinegen.generate()) # grab all the first elems
     xs = np.split(x, N)
     ys = np.split(y, N)
 
@@ -433,7 +431,7 @@ def train():
     sinegen = SinusoidGenerator(2*FLAGS.inner_bs, 25)  # update_batch * 2, meta batch size
 
     try:
-        nitr = 1e4
+        nitr = int(FLAGS.num_iter)
         for itr in range(int(nitr)):
             # create a minibatch of size 25, with 10 points
             batch_x, batch_y, amp, phase = sinegen.generate()
@@ -464,7 +462,7 @@ def train():
                     baseline_pred = nn.inner_forward(baseline_i, baseline_weights, cache=baseline_cache)
                     baseline_losses.append((baseline_pred - baseline_l)**2)
                     dout_b = 2*(baseline_pred - baseline_l)
-                    nn.inner_backward(dout_b, baseline_weights, baseline_cache)
+                    nn.inner_backward(dout_b, baseline_weights, baseline_cache, baseline_grads)
 
             optimizer.apply_gradients(weights, grads, learning_rate=FLAGS.meta_lr)
             if FLAGS.use_baseline:
@@ -491,12 +489,13 @@ if __name__ == '__main__':
     parser.add_argument('--inner_bs', type=int, default=5, help='Inner batch size')
     parser.add_argument('--weight_path', type=str, default='trained_maml_weights.pkl', help='File name to save and load weights')
     parser.add_argument('--use_baseline', type=int, default=1, help='Whether to train a baseline network')
+    parser.add_argument('--num_iter', type=float, default=1e4, help='Number of iterations')
     FLAGS = parser.parse_args()
     np.random.seed(FLAGS.seed)
     
     if FLAGS.gradcheck:
         gradcheck()
     elif FLAGS.test:
-        meta_test()
+        test()
     else:
         train()

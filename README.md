@@ -202,11 +202,21 @@ Check out MIL and DAML.
 
 ## Derivation
 
-Here is a diagram showing the derivation.  This shows an inner forward and
-inner backward pass of a network as a computational graph.  I still need
-to add the gradient update step and 2nd forward pass.
+The below diagram shows the meta forward pass for MAML with a single inner
+updated step.  By computing the gradients through this computational graph,
+I determined the computations required for the meta backwared pass. I show
+the computation for a one hidden-layer neural network for simplicity, but
+in the code I use a two hidden-layer neural network.
+
+NOTE: (dW2, db2, dW1, db1) are computed in the upper figure and passed to the lower
+figure. Gradients are taken w.r.t. weights that are inputs to upper figure.
+
+**First (inner) forward and backward:**
 
 ![derivation](/assets/derivation.png)
+
+**Inner gradient (SGD) update and second forward pass:**
+![derivation2](/assets/derivation2.png)
 
 
 
