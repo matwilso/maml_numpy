@@ -34,7 +34,7 @@ These figures show MAML fine-tuning on 10 minibatches of 5, and against a baseli
 that used joint training on the dataset (first plot), and against a random 
 intialized network (second plot).
 
-MAML                       |  Baseline (joint training)|  Random   
+MAML                       |  Baseline (joint training)|  Random init
 :-------------------------:|:-------------------------:|:----------:|  
 ![](/assets/maml.png)  |  ![](/assets/baseline.png) | ![](/assets/random.png)
 

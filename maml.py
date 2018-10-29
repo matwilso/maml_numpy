@@ -33,7 +33,6 @@ a joint-trained and random network baseline.
 GradDict = lambda: defaultdict(lambda: 0) 
 normalize = lambda x: (x - x.mean()) / (x.std() + 1e-8)
 
-
 # weight util functions
 def build_weights(hidden_dims=(64, 64)):
     """Return dictionary on neural network weights"""
@@ -102,7 +101,7 @@ class Network(object):
         cache.update(dict(x_a=x_a, affine1_a=affine1_a, relu1_a=relu1_a, affine2_a=affine2_a, relu2_a=relu2_a))
         return pred_a
 
-    def inner_backward(self, dout_a, weights, cache, grads=GradDict()):
+    def inner_backward(self, dout_a, weights, cache, grads=GradDict(), lr=None):
         """For fine-tuning network at meta-test time
 
         (Although this has some repeated code from meta_backward, it was hard to 
@@ -119,6 +118,7 @@ class Network(object):
         """
         w = weights; c = cache
         W1, b1, W2, b2, W3, b3 = w['W1'], w['b1'], w['W2'], w['b2'], w['W3'], w['b3']
+        lr = lr or self.inner_lr
 
         drelu2_a = dout_a.dot(W3.T)
         dW3 = c['relu2_a'].T.dot(dout_a)
@@ -135,21 +135,21 @@ class Network(object):
         dW1 = c['x_a'].T.dot(daffine1_a)
         db1 = np.sum(daffine1_a, axis=0)
 
-        grads['W1'] += self.normalize(dW1)
-        grads['b1'] += self.normalize(db1)
-        grads['W2'] += self.normalize(dW2)
-        grads['b2'] += self.normalize(db2)
-        grads['W3'] += self.normalize(dW3)
-        grads['b3'] += self.normalize(db3)
+        grads['W1'] += dW1
+        grads['b1'] += db1
+        grads['W2'] += dW2
+        grads['b2'] += db2
+        grads['W3'] += dW3
+        grads['b3'] += db3
 
         # Return new weights (for fine-tuning)
         new_weights = {}
-        new_weights['W1'] = W1 - self.inner_lr*grads['W1']
-        new_weights['b1'] = b1 - self.inner_lr*grads['b1']
-        new_weights['W2'] = W2 - self.inner_lr*grads['W2']
-        new_weights['b2'] = b2 - self.inner_lr*grads['b2']
-        new_weights['W3'] = W3 - self.inner_lr*grads['W3']
-        new_weights['b3'] = b3 - self.inner_lr*grads['b3']
+        new_weights['W1'] = W1 - lr*self.normalize(dW1)
+        new_weights['b1'] = b1 - lr*self.normalize(db1)
+        new_weights['W2'] = W2 - lr*self.normalize(dW2)
+        new_weights['b2'] = b2 - lr*self.normalize(db2)
+        new_weights['W3'] = W3 - lr*self.normalize(dW3)
+        new_weights['b3'] = b3 - lr*self.normalize(db3)
         return new_weights
 
 
@@ -399,6 +399,10 @@ def test():
                 dout = 2*(pred - y)
                 post_weights[key] = nn.inner_backward(dout, post_weights[key], cache)
 
+
+    colors = {'maml': 'r', 'baseline': 'b', 'random': 'g'}
+    name = {'maml': 'MAML', 'baseline': 'joint training', 'random': 'random initialization'}
+
     sine_ground = lambda x: amp*np.sin(x - phase)
     sine_pre_pred = lambda x, key: nn.inner_forward(x, pre_weights[key])[0]
     sine_post_pred = lambda x, key: nn.inner_forward(x, post_weights[key])[0]
@@ -406,8 +410,6 @@ def test():
     x_vals = np.linspace(-5, 5)
     y_ground = np.apply_along_axis(sine_ground, 0, x_vals)
 
-    colors = {'maml': 'r', 'baseline': 'b', 'random': 'g'}
-    name = {'maml': 'MAML', 'baseline': 'joint training', 'random': 'random initialization'}
 
     for key in post_weights:
         y_pre = np.array([sine_pre_pred(np.array(x), key) for x in x_vals]).squeeze()
