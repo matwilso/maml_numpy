@@ -3,10 +3,8 @@
 This is an implementation of vanilla Model-Agnostic Meta-Learning ([MAML](https://github.com/cbfinn/maml))
 in raw numpy.  I made this to better understand the algorithm and what exactly it is doing.  I derived
 the forward and backward passes following conventions from [CS231n](http://cs231n.github.io/).
-
 This code is just a rough sketch to understand the algorithm better, so it works, but 
 is not optimized or well parameterized.  
-
 This turned out to be pretty interesting and I found it helps to see the algorithm 
 logic without the backprop abstracted away by an autograd package like TensorFlow.
 
@@ -21,18 +19,13 @@ logic without the backprop abstracted away by an autograd package like TensorFlo
 ## Results
 
 To verify my implementation, I test on the sinusoid task from [Section 5.1](https://arxiv.org/pdf/1703.03400.pdf)
-of the MAML paper.
-
-I train for _x_ iterations on the training dataset, and then fine-tune on _x_.
-
-
-These figures show comparisons between fine-tuning on 10 minibatches of 5 for MAML,
-a joint-training baseline (trained on same data as MAML
-
-
-These figures show MAML fine-tuning on 10 minibatches of 5, and against a baseline
-that used joint training on the dataset (first plot), and against a random 
-intialized network (second plot).
+of the MAML paper.  I train for 10k iterations on a training dataset of sine
+function with randomly sampled amplitude and phase, 
+and then fine-tune on 10 examples for a fixed amplitude
+and phase.  After fine-tuning, I predict the value of the fixed sine function 
+for 50 evenly distributed x values between (-5, 5), and plot the results
+compared to the ground truth for pre-trained MAML, pre-trained baseline
+(joint training), and a randomly initialized network.  
 
 MAML                       |  Baseline (joint training)|  Random init
 :-------------------------:|:-------------------------:|:----------:|  
@@ -40,30 +33,27 @@ MAML                       |  Baseline (joint training)|  Random init
 
 Here are the commands to the run the code:
 
-Run 10k iterations and then save the weights to a file: <br>
-```
-python3 maml.py # train the MAML and baseline (joint trained) weights
-```
-
-Fine tune the network and plot results on sine task: <br>
-```
-python maml.py --test 1  
-```
-
-
-You can also do gradient check with:
-
-```
-python maml.py --gradcheck 1  
-```
+- Train for 10k iterations and then save the weights to a file: <br>
+	```
+	python3 maml.py # train the MAML and baseline (joint trained) weights
+	```
+- After training, fine-tune the network and plot results on sine task: <br>
+	```
+	python3 maml.py --test 1  
+	```
+- Run gradient check on implementation:
+	```
+	python3 maml.py --gradcheck 1  
+	```
 
 
-You can also try maml_2layer.py.  I originally tried using a single hidden layer
-because this made the derivation easier, but I found that it did not have enough
-it did not have enough representational capacity to solve the sinusoid problem.
-This seems to be because MAML gains power from having more layers, as described
-in [Meta-Learning And Universality](https://arxiv.org/pdf/1710.11622.pdf).
-This maml_2layer.py file is shorter and easier to understand, but does not produce good results.
+### Notes
+These results come from using a neural network with 2 hidden layers.  I 
+originally tried using 1 hidden layer because it was easier to derive, but I 
+found that it did not have enough it did not have enough representational 
+capacity to solve the sinusoid problem (see [Meta-Learning And Universality](https://arxiv.org/pdf/1710.11622.pdf) for more details on represenntational capacity of MAML).
+
+So the `maml_1hidden.py` file is shorter and easier to understand, but does not produce good results.
 
 <a id="whatismaml"/>
 
@@ -71,66 +61,72 @@ This maml_2layer.py file is shorter and easier to understand, but does not produ
 
 ### Introduction
 
-Model-Agnostic Meta-Learning is a gradient based meta-learning algorithm.  For an
+Model-Agnostic Meta-Learning (MAML) is a gradient based meta-learning algorithm.  For an
 overview of meta-learning, see a blog post from the author [here](https://bair.berkeley.edu/blog/2017/07/18/learning-to-learn/). 
 Basically meta-learning tries to solve the problem of being able to learn 
 quickly on new tasks by better incorporating past information from previous tasks.
 It has some similar motivations to transfer learning, but better incentivizes for
-quick adaptation, for example one-shot learning: given a single instance of, for
-example, a Segway, be able to distinguish Segways from other objects in new images.
+quick adaptation.  One example of where meta-learning methods greatly 
+outperform traditional methods is one-shot learning (e.g., given a single 
+instance of a new object class like Segway, quickly adapt your model so that
+you can effectively distinguish new images of Segways from other objects).
 
-As opposed to other meta-learning techniques that use RNNs, MAML only uses feed-forward
-networks and gradient descent.  The interesting thing is how it sets up the gradient
-descent scheme to optimize the network for efficient fine-tuning on the meta-test set.
+Unlike several other meta-learning methods (TODO: cite), MAML only uses 
+feed-forward networks and gradient descent.  The interesting thing is how it 
+sets up the gradient descent scheme to optimize the network for efficient 
+fine-tuning on the meta-test set.
+In standard neural network training, we use gradient-descent and backprop for 
+training.  MAML assumes that you will use this same approach to quickly 
+fine-tune on your task and it builds this into the training optimization.
 
-
-In the simplest case, you can think of it as doing 2 forward passes. It does:
-1. Forward pass with W
-1. Backward pass to compute gradients dWa
-1. Apply gradients dW (using SGD: W' <-- W - alpha\*dWa)
-1. Another forward pass with W'
-1. Backward pass through the whole thing to compute gradients dWb (NOTE: with respect to input weights W, not W'.  This is a second order derivative)
-1. Apply gradients dW' (using Adam: W <-- W - alpha\*dWb)
-
-
-TODO: equation of gradient descent
-
-
-
-
-In standard neural network training, we use gradient-descent and backprop.
-
-MAML
-assumes that you will use this same method to 
-
-MAML assumes that you are going to use gradient-descent step (normal neural network training)
-to fine-tune on the meta-test set, and it builds this into the training and meta optimization.
-
-It is broken into two phases: a meta-traning phase and a fine-tuning phase.  The meta-training phase is going to work to optimize the network parameters so that the fine-tune phase works extremely well, so that the network parameters will be sensitive to gradients and can
-quickly adapt to solve tasks in the distribution.
-
-This is inspired off the great success of ImageNet fine-tuning.  But it is 
-different from joint-training, and has a fine-tune step that is required, and
-does a much better job at solving tasks where a joint-training solution does not correspond
-to doing well on individual examples.  For instance, by always predicting 0 for a sinusoid 
-regression task where phase can vary.
-
+MAML breaks the training into two phases: a **meta-traning phase** and a **fine-tuning phase**.  The meta-training phase is going to work to optimize the network parameters so that the fine-tune phase works extremely well — so that the network parameters will be sensitive to gradients and can
+quickly adapt to solve tasks in the distribution.  The fine-tuning phase will just
+run standard gradient descent using the weights that were produced in the meta-training phase (this looks pretty similar to fine-tuning on pre-trained ImageNet weights,
+but it produces better results on meta-learning problems like one-shot learning).
 
 ### Meta-training
-**During meta-training**, it splits the data into A and B examples.  The A example
-will be used for an inner optimization (standard gradient descent), and the B examples
-will be used for an outer optimization.
+During meta-training, MAML splits the data into A and B examples.  The A example
+will be used for an inner optimization (standard gradient descent), and the B 
+examples will be used for an outer optimization.
 
+The standard equation for gradient descent looks like this equation, where the
+the gradient is taken with respect to the loss and this is used to update the
+neural network weights (in this case to theta prime). 
 
-TODO: something
 ![eq1](./assets/eq1.png)
 
-TODO: other something
+We will use this at fine-tune time and so we want it to optimize it to do really
+well. The approach that MAML chooses to do this is by optimizing the parameters
+(theta) so that they will be in a position that they can be quickly fine-tuned
+for a number of tasks in the task distribution.  Just a skip away from a good
+solution to many of the tasks.  Why not just optimize to be good at those
+tasks in the first place?  Well sometimes they can be mutually exclusive.  The
+simplest example is the sinusoid, where this standard joint training approach
+always predicts 0.
+
+
+we want it to be really efficient. We
+want it to be the case that after we run this fine-tuning step, the weights
+will be in a good place to produce good results. We can't just keep them in
+a good place for all tasks.  For example, the joint training solution for
+the sinusoid task is always predicting 0. But we want to be able to quickly
+update them so that they will be in a good location for our specific sinusoid
+problem.  So how to optimize the weights so that this will happen.
+
+We care about the performance after a gradient update, so we can just wrap
+that in an outer optimization.  The inner optimization is the gradient
+update, and the outer optimization is also gradient descent (or usually Adam).
+You could have the outer optimization be evolution (they do this in this paper,
+but they use way more compute and get about similar results, maybe worse https://arxiv.org/abs/1806.07917). Using gradient descent on the outer optimization looks like:
+
 ![eq2](./assets/eq2.png)
 
+With the f theta prime, that is the updated weights.  We run gradient descent
+such that after the update, the network is good at predicting new examples.
+The inner update is done with A examples and the outer update is done with
+B examples for the same task.  We basically use test error to train the network.
+As you might be able to infer, this is a second order method that requires running backpropagation twice.
 
-
-This is a second order method that requires running backpropagation twice.
 
 **Here is some pseudocode that matches Chelsea's implementation of MAML in TensorFlow:**
 
@@ -163,6 +159,15 @@ This seems like of a stange thing to do. But basically the effect is
 You can also run more than one step.  Maybe you would run the fast weights update
 multiple times.
 
+### MAML algorithm
+
+In the simplest case, you can think of it as doing 2 forward passes. It does:
+1. Forward pass with W
+1. Backward pass to compute gradients dWa
+1. Apply gradients dW (using SGD: W' <-- W - alpha\*dWa)
+1. Another forward pass with W'
+1. Backward pass through the whole thing to compute gradients dWb (NOTE: with respect to input weights W, not W'.  This is a second order derivative)
+1. Apply gradients dW' (using Adam: W <-- W - alpha\*dWb)
 
 
 ### Fine-tuning
@@ -192,7 +197,7 @@ prediction = forward(newInputAToPredictLabelFor, fast_weights)
 
 
 ### Notes
-Beyond the scope of this paper, Chelsea Finn and colleagues have done some 
+Beyond the scope of this README, Chelsea Finn and colleagues have done some 
 interesting further work on extending MAML and applying it to robotics problems.
 Particularly, being able to use a learned loss is extremely interesting.
 
@@ -209,7 +214,8 @@ the computation for a one hidden-layer neural network for simplicity, but
 in the code I use a two hidden-layer neural network.
 
 NOTE: (dW2, db2, dW1, db1) are computed in the upper figure and passed to the lower
-figure. Gradients are taken w.r.t. weights that are inputs to upper figure.
+figure. Gradients are taken w.r.t. weights that are inputs to upper figure. I
+use the approach from [CS231n](http://cs231n.github.io/).
 
 **First (inner) forward and backward:**
 
@@ -217,7 +223,4 @@ figure. Gradients are taken w.r.t. weights that are inputs to upper figure.
 
 **Inner gradient (SGD) update and second forward pass:**
 ![derivation2](/assets/derivation2.png)
-
-
-
 

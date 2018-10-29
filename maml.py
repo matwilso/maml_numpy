@@ -372,7 +372,7 @@ def test():
     pre_weights['random'] = build_weights()
 
     # Generate N batches of data, with same shape as training, but that all have the same amplitude and phase
-    N = 10
+    N = 2
     #sinegen = SinusoidGenerator(FLAGS.inner_bs*N, 1, config={'input_range':[1.0,5.0]}) 
     sinegen = SinusoidGenerator(FLAGS.inner_bs*N, 1)
     x, y, amp, phase = map(lambda x: x[0], sinegen.generate()) # grab all the first elems
@@ -385,7 +385,7 @@ def test():
     for key in pre_weights:
         post_weights[key] = deepcopy(pre_weights[key])
 
-    T = 1
+    T = 10
     # Run fine-tuning 
     for key in post_weights:
         for t in range(T):
@@ -415,11 +415,13 @@ def test():
         y_pre = np.array([sine_pre_pred(np.array(x), key) for x in x_vals]).squeeze()
         y_nn = np.array([sine_post_pred(np.array(x), key) for x in x_vals]).squeeze()
         plt.plot(x_vals, y_ground, 'k', label='{:.2f}sin(x - {:.2f})'.format(amp, phase))
+        plt.plot(np.concatenate(xs), np.concatenate(ys), 'ok', label='samples')
         plt.plot(x_vals, y_pre, colors[key]+'--', label='pre-update')
         plt.plot(x_vals, y_nn, colors[key]+'-', label='post-update')
 
         plt.legend()
         plt.title('Fine-tuning performance {}'.format(name[key]))
+        plt.savefig(key+'.png')
         plt.show()
 
 def train():
@@ -483,7 +485,7 @@ def train():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='MAML')
-    parser.add_argument('--seed', type=int, default=1, help='')
+    parser.add_argument('--seed', type=int, default=2, help='')
     parser.add_argument('--gradcheck', type=int, default=0, help='Run gradient check and other tests')
     parser.add_argument('--test', type=int, default=0, help='Run test on trained network to see if it works')
     parser.add_argument('--meta_lr', type=float, default=1e-3, help='Meta learning rate')
