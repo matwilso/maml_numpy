@@ -1,7 +1,7 @@
 # MAML in raw numpy
 
 This is an implementation of vanilla Model-Agnostic Meta-Learning ([MAML](https://github.com/cbfinn/maml))
-in raw numpy.  I made this to better understand the algorithm and what exactly it is doing.  I derived
+in raw numpy.  I made this to better understand the algorithm and what it is doing.  I derived
 the forward and backward passes following conventions from [CS231n](http://cs231n.github.io/).
 This code is just a rough sketch to understand the algorithm better, so it works, but 
 is not optimized or well parameterized.  
@@ -18,11 +18,18 @@ logic without the backprop abstracted away by an autograd package like TensorFlo
 
 ## Results
 
-To verify my implementation, I test on the sinusoid task from [Section 5.1](https://arxiv.org/pdf/1703.03400.pdf)
-of the MAML paper.  I train for 10k iterations on a training dataset of sine
-function with randomly sampled amplitude and phase, 
-and then fine-tune on 10 examples for a fixed amplitude
-and phase.  After fine-tuning, I predict the value of the fixed sine function 
+To verify my implementation, I test on the 1D sinusoid regression problem 
+from [Section 5.1](https://arxiv.org/pdf/1703.03400.pdf) of the MAML paper (see
+also the description of the problem in [Section 4 of this paper](https://arxiv.org/pdf/1803.02999.pdf)).
+
+- The task T = (a,b) is defined by the amplitude a and phase b of a sine wave function f(x) = a\*sin(x + b). The task distribution is formed by sampling a ~ U([0.1, 5.0]) and b ~ U([0, 2\*pi]).
+- Sample p points x1, x2, ..., xp ~ U([-5, 5])
+- Learner sees (x1, y1), (x2, y2), ..., (xp, yp) and predicts the whole function f(x)
+
+I train for 10k iterations on randomly a [dataset](utils/data_generator.py) of sine functions with
+randomly sampled amplitude and phase, and then fine-tune on 10 samples from
+a fixed amplitude and phase.
+After fine-tuning, I predict the value of the fixed sine function 
 for 50 evenly distributed x values between (-5, 5), and plot the results
 compared to the ground truth for pre-trained MAML, pre-trained baseline
 (joint training), and a randomly initialized network.  
@@ -35,7 +42,7 @@ Here are the commands to the run the code:
 
 - Train for 10k iterations and then save the weights to a file: <br>
 	```
-	python3 maml.py # train the MAML and baseline (joint trained) weights
+	python3 maml.py # train both MAML and baseline (joint trained) weights
 	```
 - After training, fine-tune the network and plot results on sine task: <br>
 	```
@@ -51,7 +58,7 @@ Here are the commands to the run the code:
 These results come from using a neural network with 2 hidden layers.  I 
 originally tried using 1 hidden layer because it was easier to derive, but I 
 found that it did not have enough it did not have enough representational 
-capacity to solve the sinusoid problem (see [Meta-Learning And Universality](https://arxiv.org/pdf/1710.11622.pdf) for more details on represenntational capacity of MAML).
+capacity to solve the sinusoid problem (see [Meta-Learning And Universality](https://arxiv.org/pdf/1710.11622.pdf) for more details on representational capacity of MAML).
 
 So the `maml_1hidden.py` file is shorter and easier to understand, but does not produce good results.
 
@@ -71,7 +78,7 @@ outperform traditional methods is one-shot learning (e.g., given a single
 instance of a new object class like Segway, quickly adapt your model so that
 you can effectively distinguish new images of Segways from other objects).
 
-Unlike several other meta-learning methods (TODO: cite), MAML only uses 
+Unlike [several](https://arxiv.org/abs/1611.02779) [other](https://openreview.net/forum?id=rJY0-Kcll) [meta-learning](https://arxiv.org/abs/1606.04474) [methods](https://arxiv.org/abs/1707.03141), MAML only uses 
 feed-forward networks and gradient descent.  The interesting thing is how it 
 sets up the gradient descent scheme to optimize the network for efficient 
 fine-tuning on the meta-test set.
@@ -79,45 +86,48 @@ In standard neural network training, we use gradient-descent and backprop for
 training.  MAML assumes that you will use this same approach to quickly 
 fine-tune on your task and it builds this into the training optimization.
 
-MAML breaks the training into two phases: a **meta-traning phase** and a **fine-tuning phase**.  The meta-training phase is going to work to optimize the network parameters so that the fine-tune phase works extremely well — so that the network parameters will be sensitive to gradients and can
-quickly adapt to solve tasks in the distribution.  The fine-tuning phase will just
-run standard gradient descent using the weights that were produced in the meta-training phase (this looks pretty similar to fine-tuning on pre-trained ImageNet weights,
-but it produces better results on meta-learning problems like one-shot learning).
+MAML breaks the meta-learning problem into two phases: a **meta-traning phase** and a **fine-tuning phase**.  The meta-training phase works to optimize the network parameters so that the fine-tune phase is more effective — so that the network parameters will be sensitive to gradients and can
+quickly adapt to solve newly sampled tasks in the distribution.  The fine-tuning phase will just
+run standard gradient descent using the weights that were produced in the meta-training phase, just like you would fine-tune a network for a task using e.g., pre-trained
+ImageNet weights.  This process looks somewhat similar to transfer learning, but
+is more general and produces better results on meta-learning problems like one-shot learning.
 
 ### Meta-training
-During meta-training, MAML splits the data into A and B examples.  The A example
-will be used for an inner optimization (standard gradient descent), and the B 
-examples will be used for an outer optimization.
+During meta-training, MAML draws several samples from a task, and splits them
+into A and B examples. For example you could draw 10 (x,y) pairs from a sinusoid
+problem and split them into 5 A and 5 B examples.
+The A examples will be used for an **inner optimization** (standard gradient descent),
+and the B examples will be used for an **outer optimization**.
 
-The standard equation for gradient descent looks like this equation, where the
+Recall that the standard equation for gradient descent looks like this, where the
 the gradient is taken with respect to the loss and this is used to update the
 neural network weights (in this case to theta prime). 
 
 ![eq1](./assets/eq1.png)
 
-We will use this at fine-tune time and so we want it to optimize it to do really
-well. The approach that MAML chooses to do this is by optimizing the parameters
-(theta) so that they will be in a position that they can be quickly fine-tuned
-for a number of tasks in the task distribution.  Just a skip away from a good
-solution to many of the tasks.  Why not just optimize to be good at those
-tasks in the first place?  Well sometimes they can be mutually exclusive.  The
-simplest example is the sinusoid, where this standard joint training approach
-always predicts 0.
+We will use this scheme at fine-tune time and we want to outer optimize so that
+it will be especially effective.
+MAML's solution to this problem is to learn a good initialization.  It will
+optimize so that the parameters (theta) of the network will be a in a good
+place in parameter space so that they can quickly be fine-tuned for a number
+of tasks in the task distribution — just a skip away from a good solution to many of the tasks.  
 
-
-we want it to be really efficient. We
-want it to be the case that after we run this fine-tuning step, the weights
-will be in a good place to produce good results. We can't just keep them in
-a good place for all tasks.  For example, the joint training solution for
-the sinusoid task is always predicting 0. But we want to be able to quickly
-update them so that they will be in a good location for our specific sinusoid
-problem.  So how to optimize the weights so that this will happen.
+Why not just optimize to be good at those tasks in the first place?  Well 
+sometimes they can be mutually exclusive.  The simplest example is the 
+sinusoid, where this standard joint training approach always predicts 0, 
+because this minimizes the expected loss when you have randomly sampled phases.
 
 We care about the performance after a gradient update, so we can just wrap
 that in an outer optimization.  The inner optimization is the gradient
-update, and the outer optimization is also gradient descent (or usually Adam).
-You could have the outer optimization be evolution (they do this in this paper,
-but they use way more compute and get about similar results, maybe worse https://arxiv.org/abs/1806.07917). Using gradient descent on the outer optimization looks like:
+update, and for MAML, the outer optimization is also gradient descent (or more 
+precisely, AdamOptimizer).
+You could also have the outer optimization be evolution (they do this 
+in [Meta-Learning by the Baldwin Effect](https://arxiv.org/abs/1806.07917), 
+but they use way more compute and get about similar results).
+Anyway, using gradient descent on the outer optimization looks like:
+
+
+TODO: this equation is too jarring.  Need to make equation intro nicer
 
 ![eq2](./assets/eq2.png)
 
@@ -146,7 +156,7 @@ fast_weights = weights + -learning_rate * gradients   # gradient descent step on
 netoutB = forward(inputB, fast_weights)
 lossB = loss_func(netoutB, labelB)
 
-# then you would plug this lossB in an optimize like Adam to optimize
+# then you would plug this lossB in an optimizer like Adam to optimize
 # w.r.t. to the original weights.  fast_weights are basically just a temporary
 # thing to see how gradient descent on the inner lossA led to update them.
 # The only state that is retained between iterations of MAML are the 
