@@ -91,8 +91,9 @@ it can effectively distinguish new images of electric scooters from other object
 During meta-training, MAML draws several samples from a **task**, and splits them
 into **A** and **B** examples. For example you could draw 10 (x,y) pairs from a sinusoid
 problem and split them into 5 A and 5 B examples.  In this case each task is
-defined by a fixed amplitude and phase of the sinusoid, but these can represent
-more interesting tasks, like what the robot should do in a [robotic imitation problem](https://sites.google.com/view/daml).
+defined by a fixed amplitude and phase of the sinusoid, but tasks can represent
+more interesting variations, like what objects the robot should interact
+with in [imitating a human demonstration](https://sites.google.com/view/daml).
 
 Once we have sampled the A and B examples from the task, we will use the A
 examples for an **inner optimization** (standard gradient descent),
@@ -105,7 +106,7 @@ for quickly fine-tuning to many varied tasks.
 
 For concretely how that is done, here is the algorithm logic and 
 pseudocode that closely match the [TensorFlow
-implementation](https://github.com/cbfinn/maml).
+implementation](https://github.com/cbfinn/maml):
 
 ### MAML algorithm
 
