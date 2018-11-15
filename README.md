@@ -188,10 +188,9 @@ NOTE: (dW2, db2, dW1, db1) are computed in the upper figure nd passed to the low
 figure. Gradients are backpropagated from the output all the way back through
 both through to the upper figure. I use the approach from [CS231n](http://cs231n.github.io/).
 
-**First (inner) forward and backward:**
-
+**Inner forward and backward:**
 ![derivation](/assets/derivation.png)
 
-**Inner gradient (SGD) update and second forward pass:**
+**Inner gradient (SGD) update and second (outer) forward pass:**
 ![derivation2](/assets/derivation2.png)
 

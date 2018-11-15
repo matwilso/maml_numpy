@@ -170,27 +170,29 @@ class Network(object):
         w = weights
         W1, b1, W2, b2, W3, b3 = w['W1'], w['b1'], w['W2'], w['b2'], w['W3'], w['b3']
 
-        # standard forward and backward computations
         # A: inner
+        # standard forward and backward computations
         inner_cache = {}
         pred_a = self.inner_forward(x_a, w, inner_cache)
 
-        # TODO: we could probably add inner_backward here (and add a cache option to inner_backward)
-
+        # inner loss
         dout_a = 2*(pred_a - label_a) 
 
+        # d 3rd layer
         dW3 = inner_cache['relu2_a'].T.dot(dout_a)
         db3 = np.sum(dout_a, axis=0)
         drelu2_a = dout_a.dot(W3.T)
 
         daffine2_a = np.where(inner_cache['affine2_a'] > 0, drelu2_a, 0)
 
+        # d 2nd layer
         dW2 = inner_cache['relu1_a'].T.dot(daffine2_a)
         db2 = np.sum(daffine2_a, axis=0)
         drelu1_a = daffine2_a.dot(W2.T)
 
         daffine1_a = np.where(inner_cache['affine1_a'] > 0, drelu1_a, 0)
 
+        # d 1st layer
         dW1 = x_a.T.dot(daffine1_a)
         db1 = np.sum(daffine1_a, axis=0)
 
@@ -239,7 +241,7 @@ class Network(object):
 
         daffine2_b = np.where(c['affine2_b'] > 0, drelu2_b, 0)
 
-        # d 2rd layer
+        # d 2nd layer
         drelu1_b = daffine2_b.dot(c['W2_prime'].T)
         dW2_prime = c['relu1_b'].T.dot(daffine2_b)
         db2_prime = np.sum(daffine2_b, axis=0)
